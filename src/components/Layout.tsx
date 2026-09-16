@@ -26,13 +26,13 @@ export default function Layout({ currentPage, onNavigate, children }: LayoutProp
       <aside
         className={`fixed left-0 top-0 z-40 h-screen w-64 border-r border-white/10 bg-zinc-950/80 backdrop-blur-xl transition-transform duration-300 ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
-        <div className="flex h-16 items-center gap-2.5 border-b border-white/10 px-6">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5">
-            <Activity className="h-5 w-5 text-emerald-400" />
+        <div className="flex h-16 items-center gap-3 border-b border-white/10 px-6">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 p-1 shadow-sm overflow-hidden">
+            <img src="/logoVRN.png" alt="VRN Track Ads Logo" className="h-full w-full object-contain" />
           </div>
           <div className="leading-tight">
             <div className="text-sm font-bold tracking-wide text-white">VRN TRACK ADS</div>
-            <div className="text-[10px] text-zinc-500">Analytics Platform</div>
+            <div className="text-[10px] text-emerald-400 font-medium">Ultra Anti-Bot Platform</div>
           </div>
         </div>
 
@@ -88,8 +88,9 @@ export default function Layout({ currentPage, onNavigate, children }: LayoutProp
               {navItems.find((n) => n.id === currentPage)?.label}
             </h2>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="hidden sm:inline text-xs text-zinc-500">VRN TRACK ADS</span>
+          <div className="flex items-center gap-2.5">
+            <img src="/logoVRN.png" alt="VRN" className="h-5 w-5 object-contain" />
+            <span className="hidden sm:inline text-xs text-zinc-400 font-medium">VRN TRACK ADS</span>
             <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
           </div>
         </header>

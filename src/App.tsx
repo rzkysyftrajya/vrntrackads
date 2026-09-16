@@ -16,10 +16,10 @@ function AppContent() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#09090b]">
         <div className="flex flex-col items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl">
-            <Activity className="h-7 w-7 animate-pulse text-emerald-400" />
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/5 p-2 backdrop-blur-xl shadow-xl shadow-emerald-500/10">
+            <img src="/logoVRN.png" alt="VRN Track Ads" className="h-full w-full object-contain animate-pulse" />
           </div>
-          <p className="text-sm text-zinc-500">Loading VRN TRACK ADS...</p>
+          <p className="text-xs font-medium tracking-wide text-zinc-400">Loading VRN TRACK ADS...</p>
         </div>
       </div>
     );

@@ -1,7 +1,39 @@
 import { createClient } from '@supabase/supabase-js';
 
+const BOT_UA_REGEX = /bot|crawler|spider|headless|puppeteer|selenium|playwright|phantom|curl|wget|python|postman|node-fetch|axios|go-http-client|apachebench|ahrefs|semrush|petalbot|bytespider|yandex|facebookexternalhit|bingbot|googlebot|slurp|duckduckbot/i;
+
+interface RateLimitRecord {
+  count: number;
+  resetAt: number;
+}
+const rateLimitMap = new Map<string, RateLimitRecord>();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const MAX_REQUESTS_PER_WINDOW = 30;
+
+function checkRateLimit(key: string): boolean {
+  const now = Date.now();
+  if (rateLimitMap.size > 5000) {
+    for (const [k, v] of rateLimitMap.entries()) {
+      if (v.resetAt < now) rateLimitMap.delete(k);
+    }
+  }
+
+  const record = rateLimitMap.get(key);
+  if (!record || record.resetAt < now) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+
+  if (record.count >= MAX_REQUESTS_PER_WINDOW) {
+    return false;
+  }
+
+  record.count += 1;
+  return true;
+}
+
 export default async function handler(req: any, res: any) {
-  // CORS
+  // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, Apikey');
@@ -16,7 +48,15 @@ export default async function handler(req: any, res: any) {
 
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    const { event, tracking_key, ...params } = body || {};
+    const {
+      event,
+      tracking_key,
+      session_id,
+      fingerprint,
+      is_bot: clientIsBot,
+      bot_reasons,
+      ...params
+    } = body || {};
 
     if (!tracking_key || !event) {
       return res.status(400).json({ error: 'Missing tracking_key or event' });
@@ -51,7 +91,7 @@ export default async function handler(req: any, res: any) {
       return res.status(404).json({ error: 'Invalid tracking key' });
     }
 
-    const userAgent = (req.headers['user-agent'] as string) || '';
+    const userAgent = (req.headers['user-agent'] as string) || params.user_agent || '';
     const isMobile = /Mobile|Android|iPhone|iPod/i.test(userAgent);
     const isTablet = /iPad|Tablet/i.test(userAgent);
     const uaDevice = isTablet ? 'Tablet' : isMobile ? 'Mobile' : 'Desktop';
@@ -82,6 +122,41 @@ export default async function handler(req: any, res: any) {
       (req.headers.referer ?? '');
     const referrer = params.referrer || '';
 
+    // Advanced Bot & Click Fraud Detection
+    let isBot = Boolean(clientIsBot);
+    const detectionReasons: string[] = Array.isArray(bot_reasons) ? [...bot_reasons] : [];
+
+    if (BOT_UA_REGEX.test(userAgent)) {
+      isBot = true;
+      detectionReasons.push('server_ua_crawler');
+    }
+
+    const rateLimitKey = `${ip}_${session_id || fingerprint || 'anon'}`;
+    if (!checkRateLimit(rateLimitKey)) {
+      isBot = true;
+      detectionReasons.push('rate_limit_exceeded');
+    }
+
+    let isDuplicateGclid = false;
+    const gclid = params.gclid ? String(params.gclid).trim() : null;
+
+    if (event === 'click' && gclid) {
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: existingClick } = await supabase
+        .from('clicks')
+        .select('id')
+        .eq('tracking_key', tracking_key)
+        .eq('gclid', gclid)
+        .gte('created_at', oneDayAgo)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingClick) {
+        isDuplicateGclid = true;
+        detectionReasons.push('duplicate_gclid');
+      }
+    }
+
     const commonFields = {
       user_id: profile.user_id,
       tracking_key,
@@ -104,7 +179,7 @@ export default async function handler(req: any, res: any) {
     } else {
       const { error } = await supabase.from('clicks').insert({
         ...commonFields,
-        gclid: params.gclid || null,
+        gclid,
         utm_source: params.utm_source || null,
         utm_medium: params.utm_medium || null,
         utm_campaign: params.utm_campaign || null,
@@ -115,21 +190,55 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    if (profile.forwarding_active && profile.apps_script_url) {
-      const forwardPayload = { event, tracking_key, ...params };
+    // Forwarding to Google Apps Script only if NOT bot and NOT duplicate
+    const shouldForward =
+      profile.forwarding_active !== false &&
+      Boolean(profile.apps_script_url) &&
+      !isBot &&
+      !isDuplicateGclid;
+
+    if (shouldForward && profile.apps_script_url) {
+      const forwardPayload = {
+        event,
+        tracking_key,
+        user_id: profile.user_id,
+        ip_address: ip,
+        country,
+        city,
+        device: params.device || uaDevice,
+        browser: uaBrowser,
+        landing_page: landingPage,
+        referrer,
+        gclid,
+        utm_source: params.utm_source || null,
+        utm_medium: params.utm_medium || null,
+        utm_campaign: params.utm_campaign || null,
+        keyword: params.keyword || null,
+        timestamp: new Date().toISOString(),
+        session_id: session_id || null,
+        fingerprint: fingerprint || null,
+        click_target: params.click_target || null,
+        target_text: params.target_text || null,
+      };
+      
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
+      const timeout = setTimeout(() => controller.abort(), 8000);
       fetch(profile.apps_script_url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(forwardPayload),
+        redirect: 'follow',
         signal: controller.signal,
       })
         .then(() => clearTimeout(timeout))
         .catch(() => {});
     }
 
-    return res.status(200).json({ success: true, event });
+    return res.status(200).json({
+      success: true,
+      event,
+      filtered_bot: isBot || isDuplicateGclid,
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Internal server error' });
   }

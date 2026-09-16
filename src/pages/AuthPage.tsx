@@ -47,11 +47,11 @@ export default function AuthPage() {
 
       <div className="relative w-full max-w-md">
         <div className="mb-6 text-center">
-          <div className="mb-3 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl">
-            <Activity className="h-7 w-7 text-emerald-400" />
+          <div className="mb-3 inline-flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/5 p-2 backdrop-blur-xl shadow-xl shadow-emerald-500/5">
+            <img src="/logoVRN.png" alt="VRN Track Ads" className="h-full w-full object-contain" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-white">VRN TRACK ADS</h1>
-          <p className="mt-1 text-xs text-zinc-400">Ad Tracking & Real-Time Analytics Platform</p>
+          <p className="mt-1 text-xs text-zinc-400">Ad Tracking & Real-Time Anti-Bot Analytics Platform</p>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 sm:p-8 backdrop-blur-xl shadow-2xl">

@@ -6,6 +6,41 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, Authorization, X-Client-Info, Apikey, Content-Type",
 };
 
+// Known crawler / bot regex on server-side
+const BOT_UA_REGEX = /bot|crawler|spider|headless|puppeteer|selenium|playwright|phantom|curl|wget|python|postman|node-fetch|axios|go-http-client|apachebench|ahrefs|semrush|petalbot|bytespider|yandex|facebookexternalhit|bingbot|googlebot|slurp|duckduckbot/i;
+
+// In-memory rate limiter per worker instance (Sliding window)
+interface RateLimitRecord {
+  count: number;
+  resetAt: number;
+}
+const rateLimitMap = new Map<string, RateLimitRecord>();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const MAX_REQUESTS_PER_WINDOW = 30; // 30 req / min per IP or Session
+
+function checkRateLimit(key: string): boolean {
+  const now = Date.now();
+  // Occasional cleanup of stale entries
+  if (rateLimitMap.size > 5000) {
+    for (const [k, v] of rateLimitMap.entries()) {
+      if (v.resetAt < now) rateLimitMap.delete(k);
+    }
+  }
+
+  const record = rateLimitMap.get(key);
+  if (!record || record.resetAt < now) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true; // allowed
+  }
+
+  if (record.count >= MAX_REQUESTS_PER_WINDOW) {
+    return false; // rate limit exceeded (bot/fraud suspected)
+  }
+
+  record.count += 1;
+  return true;
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -40,8 +75,8 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const body = await req.json();
-    const { event, tracking_key, ...params } = body;
+    const body = await req.json().catch(() => ({}));
+    const { event, tracking_key, session_id, fingerprint, is_bot: clientIsBot, bot_reasons, ...params } = body;
 
     if (!tracking_key || !event) {
       return jsonResponse({ error: "Missing tracking_key or event" }, 400);
@@ -77,7 +112,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const resolvedUserId = profile.user_id || profile.id;
-    const userAgent = req.headers.get("user-agent") || "";
+    const userAgent = req.headers.get("user-agent") || params.user_agent || "";
     const { device: uaDevice, browser: uaBrowser } = parseUserAgent(userAgent);
 
     const country =
@@ -104,6 +139,48 @@ Deno.serve(async (req: Request) => {
       (req.headers.get("referer") ?? "");
     const referrer = params.referrer || "";
 
+    // -------------------------------------------------------------
+    // ADVANCED BOT & CLICK FRAUD DETECTION
+    // -------------------------------------------------------------
+    let isBot = Boolean(clientIsBot);
+    const detectionReasons: string[] = Array.isArray(bot_reasons) ? [...bot_reasons] : [];
+
+    // 1. Server-side User Agent inspection
+    if (BOT_UA_REGEX.test(userAgent)) {
+      isBot = true;
+      detectionReasons.push("server_ua_crawler");
+    }
+
+    // 2. In-memory Rate Limiting (per IP & per Session/Fingerprint)
+    const rateLimitKey = `${ip}_${session_id || fingerprint || "anon"}`;
+    const withinRateLimit = checkRateLimit(rateLimitKey);
+    if (!withinRateLimit) {
+      isBot = true;
+      detectionReasons.push("rate_limit_exceeded");
+    }
+
+    // 3. GCLID Deduplication Check (for Clicks)
+    let isDuplicateGclid = false;
+    const gclid = params.gclid ? String(params.gclid).trim() : null;
+
+    if (event === "click" && gclid) {
+      // Check if this gclid already exists in clicks for this user/tracking key in last 24h
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: existingClick } = await supabase
+        .from("clicks")
+        .select("id")
+        .eq("tracking_key", tracking_key)
+        .eq("gclid", gclid)
+        .gte("created_at", oneDayAgo)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingClick) {
+        isDuplicateGclid = true;
+        detectionReasons.push("duplicate_gclid");
+      }
+    }
+
     const commonFields = {
       user_id: resolvedUserId,
       tracking_key,
@@ -114,6 +191,7 @@ Deno.serve(async (req: Request) => {
       landing_page: landingPage,
     };
 
+    // Save event to database
     if (event === "impression") {
       const { error } = await supabase.from("impressions").insert({
         ...commonFields,
@@ -127,7 +205,7 @@ Deno.serve(async (req: Request) => {
     } else {
       const { error } = await supabase.from("clicks").insert({
         ...commonFields,
-        gclid: params.gclid || null,
+        gclid,
         utm_source: params.utm_source || null,
         utm_medium: params.utm_medium || null,
         utm_campaign: params.utm_campaign || null,
@@ -139,8 +217,17 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Forward to Google Apps Script URL
-    if (profile.forwarding_active !== false && profile.apps_script_url) {
+    // -------------------------------------------------------------
+    // FORWARDING TO GOOGLE APPS SCRIPT
+    // Protection: STRICT FILTERING (Bots & duplicate clicks are NOT forwarded!)
+    // -------------------------------------------------------------
+    const shouldForward =
+      profile.forwarding_active !== false &&
+      Boolean(profile.apps_script_url) &&
+      !isBot &&
+      !isDuplicateGclid;
+
+    if (shouldForward && profile.apps_script_url) {
       const forwardPayload = {
         event,
         tracking_key,
@@ -152,13 +239,16 @@ Deno.serve(async (req: Request) => {
         browser: uaBrowser,
         landing_page: landingPage,
         referrer,
-        gclid: params.gclid || null,
+        gclid,
         utm_source: params.utm_source || null,
         utm_medium: params.utm_medium || null,
         utm_campaign: params.utm_campaign || null,
         keyword: params.keyword || null,
         timestamp: new Date().toISOString(),
-        ...params,
+        session_id: session_id || null,
+        fingerprint: fingerprint || null,
+        click_target: params.click_target || null,
+        target_text: params.target_text || null,
       };
 
       const forwardPromise = (async () => {
@@ -166,7 +256,7 @@ Deno.serve(async (req: Request) => {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 8000);
           
-          // Menggunakan redirect: 'follow' dan text/plain agar tidak diblokir Apps Script CORS / 302
+          // Using text/plain & redirect: follow prevents Apps Script CORS / 302 blocks
           const res = await fetch(profile.apps_script_url!, {
             method: "POST",
             headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -188,9 +278,15 @@ Deno.serve(async (req: Request) => {
       } else {
         forwardPromise.catch(() => {});
       }
+    } else if (isBot || isDuplicateGclid) {
+      console.log(`[Bot Filtered] Event ${event} withheld from Google Sheets. Reasons: ${detectionReasons.join(", ")}`);
     }
 
-    return jsonResponse({ success: true, event });
+    return jsonResponse({
+      success: true,
+      event,
+      filtered_bot: isBot || isDuplicateGclid,
+    });
   } catch (err: any) {
     return jsonResponse({ error: err.message }, 500);
   }
