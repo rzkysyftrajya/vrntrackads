@@ -1,0 +1,2 @@
+[functions.track]
+verify_jwt = false
