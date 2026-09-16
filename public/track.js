@@ -1,9 +1,10 @@
 /**
  * VRN TRACK ADS — Tracking SDK v1.0
  * Auto-detects URL parameters (gclid, utm_source, utm_medium, utm_campaign, keyword),
- * device, referrer, and landing page. Fires impression on load and click on CTA links.
+ * device, browser, referrer, and landing page.
+ * Fires impression on load and click on CTA links.
  *
- * Usage: <script src="https://YOUR_DOMAIN/track.js" data-tracking-id="TRACKING_KEY"></script>
+ * Usage: <script src="https://YOUR_DOMAIN/track.js" data-tracking-id="YOUR_TRACKING_KEY"></script>
  */
 (function () {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -13,19 +14,24 @@
   var trackingKey = scriptEl.getAttribute('data-tracking-id');
   if (!trackingKey) return;
 
+  // Deployed Supabase Edge Function URL (Primary endpoint for external landing pages)
   var supabaseEdgeUrl = 'https://qtgbuacxiuntczeaqlqi.supabase.co/functions/v1/track';
   var endpoint = scriptEl.getAttribute('data-endpoint');
+
   if (!endpoint) {
-    if (scriptEl.src && scriptEl.src.indexOf('http') === 0) {
-      endpoint = scriptEl.src.replace(/\/track\.js.*$/, '/api/public/track');
-    } else {
+    var isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    var isScriptFromSameDomain = scriptEl.src && scriptEl.src.indexOf(window.location.origin) === 0;
+
+    if (isLocalhost && isScriptFromSameDomain) {
       endpoint = '/api/public/track';
+    } else {
+      endpoint = supabaseEdgeUrl;
     }
   }
 
   function getParam(name) {
     try {
-      var m = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
+      var m = new RegExp('[?&]' + name + '=([^&]*)', 'i').exec(window.location.search);
       return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
     } catch (_) {
       return '';
@@ -49,7 +55,7 @@
     return 'Unknown';
   }
 
-  var payload = {
+  var basePayload = {
     tracking_key: trackingKey,
     landing_page: window.location.href,
     referrer: document.referrer || '',
@@ -63,12 +69,17 @@
   };
 
   function sendEvent(event, extra) {
-    var data = Object.assign({}, payload, { event: event }, extra || {});
+    var data = Object.assign({}, basePayload, { event: event }, extra || {});
     var body = JSON.stringify(data);
-    
-    // Try primary endpoint first, with fallback to Supabase Edge Function
-    var targetUrls = [endpoint, supabaseEdgeUrl];
-    if (endpoint === supabaseEdgeUrl) targetUrls = [supabaseEdgeUrl];
+
+    if (window.console && window.console.log) {
+      console.log('[VRN TRACK ADS] Sending ' + event + ' event:', data);
+    }
+
+    var targetUrls = [endpoint];
+    if (endpoint !== supabaseEdgeUrl) {
+      targetUrls.push(supabaseEdgeUrl);
+    }
 
     function tryNext(index) {
       if (index >= targetUrls.length) return;
@@ -81,17 +92,24 @@
             headers: { 'Content-Type': 'application/json' },
             body: body,
             keepalive: true,
-          }).then(function(res) {
-            if (!res.ok && index + 1 < targetUrls.length) {
+          }).then(function (res) {
+            if (res.ok) {
+              if (window.console && window.console.log) {
+                console.log('[VRN TRACK ADS] Event recorded successfully via ' + targetUrl);
+              }
+            } else if (index + 1 < targetUrls.length) {
               tryNext(index + 1);
             }
-          }).catch(function() {
-            sendBeaconOrXHR(targetUrl, body, function() {
+          }).catch(function (err) {
+            if (window.console && window.console.warn) {
+              console.warn('[VRN TRACK ADS] Fetch error on ' + targetUrl + ':', err);
+            }
+            sendBeaconOrXHR(targetUrl, body, function () {
               if (index + 1 < targetUrls.length) tryNext(index + 1);
             });
           });
         } else {
-          sendBeaconOrXHR(targetUrl, body, function() {
+          sendBeaconOrXHR(targetUrl, body, function () {
             if (index + 1 < targetUrls.length) tryNext(index + 1);
           });
         }
@@ -113,9 +131,7 @@
         var xhr = new XMLHttpRequest();
         xhr.open('POST', url, true);
         xhr.setRequestHeader('Content-Type', 'application/json');
-        if (onFail) {
-          xhr.onerror = onFail;
-        }
+        if (onFail) xhr.onerror = onFail;
         xhr.send(body);
       }
     } catch (_) {
@@ -126,23 +142,30 @@
   // Safe DOM Event Listeners
   if (document && typeof document.addEventListener === 'function') {
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { sendEvent('impression'); });
+      document.addEventListener('DOMContentLoaded', function () {
+        sendEvent('impression');
+      });
     } else {
       sendEvent('impression');
     }
 
-    document.addEventListener('click', function (e) {
-      var target = e ? (e.target || e.srcElement) : null;
-      var el = target && target.closest ? target.closest('a, button, [data-vrn-cta], [role="button"]') : null;
-      if (el) {
-        sendEvent('click', {
-          gclid: payload.gclid,
-          utm_source: payload.utm_source,
-          utm_medium: payload.utm_medium,
-          utm_campaign: payload.utm_campaign,
-          keyword: payload.keyword,
-        });
-      }
-    }, true);
+    // Track clicks on CTA links / buttons / forms
+    document.addEventListener(
+      'click',
+      function (e) {
+        var target = e ? e.target || e.srcElement : null;
+        var el = target && target.closest ? target.closest('a, button, [data-vrn-cta], [role="button"]') : null;
+        if (el) {
+          sendEvent('click', {
+            gclid: basePayload.gclid,
+            utm_source: basePayload.utm_source,
+            utm_medium: basePayload.utm_medium,
+            utm_campaign: basePayload.utm_campaign,
+            keyword: basePayload.keyword,
+          });
+        }
+      },
+      true
+    );
   }
 })();

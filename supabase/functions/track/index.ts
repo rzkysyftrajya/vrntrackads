@@ -135,27 +135,52 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Async forward to apps_script_url with 5s timeout
-    if (profile.forwarding_active && profile.apps_script_url) {
-      const forwardPayload = { event, tracking_key, ...params };
+    // Async forward to apps_script_url with 6s timeout
+    if (profile.forwarding_active !== false && profile.apps_script_url) {
+      const forwardPayload = {
+        event,
+        tracking_key,
+        user_id: profile.user_id,
+        ip_address: ip,
+        country,
+        city,
+        device: params.device || uaDevice,
+        browser: uaBrowser,
+        landing_page: landingPage,
+        referrer,
+        gclid: params.gclid || null,
+        utm_source: params.utm_source || null,
+        utm_medium: params.utm_medium || null,
+        utm_campaign: params.utm_campaign || null,
+        keyword: params.keyword || null,
+        timestamp: new Date().toISOString(),
+        ...params,
+      };
+
       const forwardPromise = (async () => {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 5000);
-          await fetch(profile.apps_script_url!, {
+          const timeout = setTimeout(() => controller.abort(), 6000);
+          const res = await fetch(profile.apps_script_url!, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(forwardPayload),
             signal: controller.signal,
           });
           clearTimeout(timeout);
-        } catch {
-          // forwarding failure is non-fatal
+          console.log(`[Forwarding Success] HTTP ${res.status} to Apps Script`);
+        } catch (err: any) {
+          console.warn(`[Forwarding Warning] Failed to forward to Apps Script: ${err?.message || err}`);
         }
       })();
 
+      // Use EdgeRuntime.waitUntil if available
+      // @ts-ignore
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+        // @ts-ignore
         EdgeRuntime.waitUntil(forwardPromise);
+      } else {
+        forwardPromise.catch(() => {});
       }
     }
 
