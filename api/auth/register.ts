@@ -73,8 +73,10 @@ export default async function handler(req: any, res: any) {
 
           if (!prof) {
             await supabaseAdmin.from('profiles').insert({
+              id: existing.id,
               user_id: existing.id,
               display_name: email.split('@')[0],
+              tracking_key: existing.id,
             });
           }
 
@@ -88,8 +90,10 @@ export default async function handler(req: any, res: any) {
     // 2. Ensure profile exists for the newly created user
     if (createdUser?.user) {
       await supabaseAdmin.from('profiles').insert({
+        id: createdUser.user.id,
         user_id: createdUser.user.id,
         display_name: email.split('@')[0],
+        tracking_key: createdUser.user.id,
       });
     }
 

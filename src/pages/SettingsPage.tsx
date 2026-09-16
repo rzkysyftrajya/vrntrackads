@@ -87,22 +87,32 @@ function doPost(e) {
 }`;
 
   async function handleSave() {
-    const userId = profile?.user_id || user?.id;
-    if (!userId) {
-      notify('User ID tidak ditemukan', 'error');
+    let currentUserId = user?.id || profile?.user_id;
+
+    if (!currentUserId) {
+      const { data: authData } = await supabase.auth.getUser();
+      currentUserId = authData?.user?.id;
+    }
+
+    if (!currentUserId) {
+      notify('User ID tidak ditemukan — silakan login ulang', 'error');
       return;
     }
 
     setSaving(true);
     try {
+      const payload = {
+        id: currentUserId,
+        user_id: currentUserId,
+        display_name: profile?.display_name || user?.email?.split('@')[0] || 'VRN User',
+        tracking_key: trackingKey,
+        apps_script_url: appsScriptUrl ? appsScriptUrl.trim() : null,
+        forwarding_active: forwardingActive,
+      };
+
       const { error } = await supabase
         .from('profiles')
-        .upsert({
-          user_id: userId,
-          tracking_key: trackingKey,
-          apps_script_url: appsScriptUrl ? appsScriptUrl.trim() : null,
-          forwarding_active: forwardingActive,
-        }, { onConflict: 'user_id' });
+        .upsert(payload, { onConflict: 'user_id' });
 
       if (error) {
         notify('Gagal menyimpan pengaturan: ' + error.message, 'error');
@@ -121,20 +131,29 @@ function doPost(e) {
   }
 
   async function handleToggleForwarding() {
-    const userId = profile?.user_id || user?.id;
-    if (!userId) return;
+    let currentUserId = user?.id || profile?.user_id;
+
+    if (!currentUserId) {
+      const { data: authData } = await supabase.auth.getUser();
+      currentUserId = authData?.user?.id;
+    }
+
+    if (!currentUserId) return;
 
     const newVal = !forwardingActive;
     setForwardingActive(newVal);
 
     try {
+      const payload = {
+        id: currentUserId,
+        user_id: currentUserId,
+        tracking_key: trackingKey,
+        forwarding_active: newVal,
+      };
+
       const { error } = await supabase
         .from('profiles')
-        .upsert({
-          user_id: userId,
-          tracking_key: trackingKey,
-          forwarding_active: newVal,
-        }, { onConflict: 'user_id' });
+        .upsert(payload, { onConflict: 'user_id' });
 
       if (error) {
         setForwardingActive(!newVal);
@@ -143,8 +162,9 @@ function doPost(e) {
         notify(`Forwarding ke Google Sheets ${newVal ? 'diaktifkan' : 'dinonaktifkan'}`, 'success');
         await refreshProfile();
       }
-    } catch {
+    } catch (err: any) {
       setForwardingActive(!newVal);
+      notify('Error: ' + (err?.message || 'Gagal mengubah status'), 'error');
     }
   }
 

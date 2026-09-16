@@ -95,8 +95,10 @@ function devApiPlugin(env: Record<string, string>): Plugin {
 
                   if (!prof) {
                     await supabaseAdmin.from('profiles').insert({
+                      id: existing.id,
                       user_id: existing.id,
                       display_name: email.split('@')[0],
+                      tracking_key: existing.id,
                     });
                   }
 
@@ -115,8 +117,10 @@ function devApiPlugin(env: Record<string, string>): Plugin {
 
             if (createdUser?.user) {
               await supabaseAdmin.from('profiles').insert({
+                id: createdUser.user.id,
                 user_id: createdUser.user.id,
                 display_name: email.split('@')[0],
+                tracking_key: createdUser.user.id,
               });
             }
 
