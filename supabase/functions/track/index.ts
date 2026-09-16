@@ -64,7 +64,7 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Look up the profile by tracking_key to get user_id + forwarding config
+    // Look up profile by tracking_key, user_id, or id
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("id, user_id, apps_script_url, forwarding_active")
@@ -72,19 +72,21 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (profileError || !profile) {
-      return jsonResponse({ error: "Invalid tracking key" }, 404);
+      console.error(`[Tracking Error] Key not found: ${tracking_key}`, profileError);
+      return jsonResponse({ error: `Invalid tracking key: ${tracking_key}` }, 404);
     }
 
+    const resolvedUserId = profile.user_id || profile.id;
     const userAgent = req.headers.get("user-agent") || "";
     const { device: uaDevice, browser: uaBrowser } = parseUserAgent(userAgent);
 
-    // Geo from CF / Vercel headers
     const country =
       req.headers.get("x-vercel-ip-country") ||
       req.headers.get("cf-ipcountry") ||
       req.headers.get("x-country-code") ||
       params.country ||
       "Unknown";
+      
     const city =
       req.headers.get("x-vercel-ip-city") ||
       req.headers.get("cf-ipcity") ||
@@ -103,7 +105,7 @@ Deno.serve(async (req: Request) => {
     const referrer = params.referrer || "";
 
     const commonFields = {
-      user_id: profile.user_id,
+      user_id: resolvedUserId,
       tracking_key,
       device: params.device || uaDevice,
       ip_address: ip,
@@ -119,6 +121,7 @@ Deno.serve(async (req: Request) => {
         referrer,
       });
       if (error) {
+        console.error("[Insert Impression Error]", error);
         return jsonResponse({ error: "Failed to save impression", details: error.message }, 500);
       }
     } else {
@@ -131,16 +134,17 @@ Deno.serve(async (req: Request) => {
         keyword: params.keyword || null,
       });
       if (error) {
+        console.error("[Insert Click Error]", error);
         return jsonResponse({ error: "Failed to save click", details: error.message }, 500);
       }
     }
 
-    // Async forward to apps_script_url with 6s timeout
+    // Forward to Google Apps Script URL
     if (profile.forwarding_active !== false && profile.apps_script_url) {
       const forwardPayload = {
         event,
         tracking_key,
-        user_id: profile.user_id,
+        user_id: resolvedUserId,
         ip_address: ip,
         country,
         city,
@@ -160,21 +164,23 @@ Deno.serve(async (req: Request) => {
       const forwardPromise = (async () => {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 6000);
+          const timeout = setTimeout(() => controller.abort(), 8000);
+          
+          // Menggunakan redirect: 'follow' dan text/plain agar tidak diblokir Apps Script CORS / 302
           const res = await fetch(profile.apps_script_url!, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
             body: JSON.stringify(forwardPayload),
+            redirect: "follow",
             signal: controller.signal,
           });
           clearTimeout(timeout);
-          console.log(`[Forwarding Success] HTTP ${res.status} to Apps Script`);
+          console.log(`[Forwarding Success] Status ${res.status} to Apps Script`);
         } catch (err: any) {
           console.warn(`[Forwarding Warning] Failed to forward to Apps Script: ${err?.message || err}`);
         }
       })();
 
-      // Use EdgeRuntime.waitUntil if available
       // @ts-ignore
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
         // @ts-ignore
