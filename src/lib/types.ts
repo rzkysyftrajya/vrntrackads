@@ -51,6 +51,12 @@ export interface LiveFeedItem {
   country: string;
   city: string;
   device: string;
+  browser?: string | null;
+  ip_address?: string | null;
+  gclid?: string | null;
+  utm_source?: string | null;
+  keyword?: string | null;
   landing_page: string;
   created_at: string;
+  forwarding_status?: string | null;
 }

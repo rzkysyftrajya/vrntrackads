@@ -2,10 +2,27 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
-import { Key, Code2, Link2, ToggleLeft, ToggleRight, Loader2, Check, Copy, Send, ChevronDown, ChevronUp, FileCode } from 'lucide-react';
+import {
+  Key,
+  Code2,
+  Link2,
+  ToggleLeft,
+  ToggleRight,
+  Loader2,
+  Check,
+  Copy,
+  Send,
+  ChevronDown,
+  ChevronUp,
+  FileCode,
+  ShieldCheck,
+  CheckCircle2,
+  AlertCircle,
+  HelpCircle,
+} from 'lucide-react';
 
 export default function SettingsPage() {
-  const { profile, refreshProfile } = useAuth();
+  const { user, profile, refreshProfile } = useAuth();
   const { notify } = useToast();
   const [appsScriptUrl, setAppsScriptUrl] = useState('');
   const [forwardingActive, setForwardingActive] = useState(true);
@@ -15,17 +32,19 @@ export default function SettingsPage() {
   const [copiedSnippet, setCopiedSnippet] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [showScriptHelper, setShowScriptHelper] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'untested' | 'connected' | 'failed'>('untested');
 
   useEffect(() => {
     if (profile) {
       setAppsScriptUrl(profile.apps_script_url || '');
-      setForwardingActive(profile.forwarding_active);
+      setForwardingActive(profile.forwarding_active ?? true);
+      if (profile.apps_script_url) {
+        setConnectionStatus('connected');
+      }
     }
   }, [profile]);
 
-  if (!profile) return null;
-
-  const trackingKey = profile.tracking_key;
+  const trackingKey = profile?.tracking_key || user?.id || 'YOUR_TRACKING_KEY';
   const domain = window.location.origin;
   const snippet = `<script src="${domain}/track.js" data-tracking-id="${trackingKey}"></script>`;
 
@@ -68,33 +87,64 @@ function doPost(e) {
 }`;
 
   async function handleSave() {
+    const userId = profile?.user_id || user?.id;
+    if (!userId) {
+      notify('User ID tidak ditemukan', 'error');
+      return;
+    }
+
     setSaving(true);
-    const { error } = await supabase
-      .from('profiles')
-      .update({ apps_script_url: appsScriptUrl || null, forwarding_active: forwardingActive })
-      .eq('user_id', profile!.user_id);
-    setSaving(false);
-    if (error) {
-      notify('Failed to save settings', 'error');
-    } else {
-      notify('Settings saved successfully', 'success');
-      await refreshProfile();
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .upsert({
+          user_id: userId,
+          tracking_key: trackingKey,
+          apps_script_url: appsScriptUrl ? appsScriptUrl.trim() : null,
+          forwarding_active: forwardingActive,
+        }, { onConflict: 'user_id' });
+
+      if (error) {
+        notify('Gagal menyimpan pengaturan: ' + error.message, 'error');
+      } else {
+        notify('Pengaturan integrasi berhasil disimpan!', 'success');
+        if (appsScriptUrl.trim()) {
+          setConnectionStatus('connected');
+        }
+        await refreshProfile();
+      }
+    } catch (err: any) {
+      notify('Error: ' + (err?.message || 'Gagal menyimpan'), 'error');
+    } finally {
+      setSaving(false);
     }
   }
 
   async function handleToggleForwarding() {
+    const userId = profile?.user_id || user?.id;
+    if (!userId) return;
+
     const newVal = !forwardingActive;
     setForwardingActive(newVal);
-    const { error } = await supabase
-      .from('profiles')
-      .update({ forwarding_active: newVal })
-      .eq('user_id', profile!.user_id);
-    if (error) {
+
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .upsert({
+          user_id: userId,
+          tracking_key: trackingKey,
+          forwarding_active: newVal,
+        }, { onConflict: 'user_id' });
+
+      if (error) {
+        setForwardingActive(!newVal);
+        notify('Gagal mengubah status forwarding: ' + error.message, 'error');
+      } else {
+        notify(`Forwarding ke Google Sheets ${newVal ? 'diaktifkan' : 'dinonaktifkan'}`, 'success');
+        await refreshProfile();
+      }
+    } catch {
       setForwardingActive(!newVal);
-      notify('Failed to toggle forwarding', 'error');
-    } else {
-      notify(`Forwarding ${newVal ? 'enabled' : 'disabled'}`, 'success');
-      await refreshProfile();
     }
   }
 
@@ -107,15 +157,16 @@ function doPost(e) {
       const payload = {
         event: 'impression',
         tracking_key: trackingKey,
-        landing_page: `${domain}/test-connection`,
+        landing_page: `${domain}/test-connection-page`,
         referrer: 'vrn-track-ads-test',
+        device: 'Desktop',
+        browser: 'Chrome Test',
+        city: 'Jakarta',
+        country: 'Indonesia',
+        ip_address: '180.252.120.1',
       };
 
-      const endpoints = [
-        '/api/public/track',
-        `${supabaseUrl}/functions/v1/track`,
-      ];
-
+      const endpoints = ['/api/public/track', `${supabaseUrl}/functions/v1/track`];
       let success = false;
       let lastErrorMessage = '';
 
@@ -143,14 +194,18 @@ function doPost(e) {
       }
 
       if (success) {
-        notify('Test event sent successfully! Check your dashboard and spreadsheet.', 'success');
+        setConnectionStatus('connected');
+        notify('Test Event Berhasil! Data pelacakan telah diterima oleh server & dikirim ke stream.', 'success');
       } else {
-        notify(lastErrorMessage || 'Test failed — check your tracking key', 'error');
+        setConnectionStatus('failed');
+        notify(lastErrorMessage || 'Test gagal — periksa kunci pelacak atau koneksi', 'error');
       }
     } catch {
-      notify('Network error — could not reach tracking endpoint', 'error');
+      setConnectionStatus('failed');
+      notify('Koneksi endpoint tidak dapat dihubungi', 'error');
+    } finally {
+      setTesting(false);
     }
-    setTesting(false);
   }
 
   function copy(text: string, setFlag: (v: boolean) => void) {
@@ -160,55 +215,117 @@ function doPost(e) {
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
-      {/* Tracking Key */}
-      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl">
-        <div className="mb-4 flex items-center gap-2">
-          <Key className="h-4 w-4 text-emerald-400" />
-          <h3 className="text-sm font-semibold text-white">Your Tracking Key</h3>
+    <div className="max-w-3xl space-y-6 mx-auto">
+      {/* Header Info */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-white">Integration Settings</h2>
+          <p className="text-xs text-zinc-400">
+            Kelola kunci pelacak Anda dan integrasikan data ke Google Spreadsheet.
+          </p>
         </div>
-        <p className="mb-4 text-xs text-zinc-400">This unique key identifies your account in all tracking events. Use it in the embed snippet below.</p>
-        <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-zinc-900/50 p-3">
-          <code className="flex-1 truncate font-mono text-sm text-emerald-300">{trackingKey}</code>
-          <button onClick={() => copy(trackingKey, setCopiedKey)} className="rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-300 transition hover:bg-white/10">
+        <div className="flex items-center gap-2">
+          {connectionStatus === 'connected' && (
+            <div className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+              Connection: Active & Verified
+            </div>
+          )}
+          {connectionStatus === 'failed' && (
+            <div className="flex items-center gap-1.5 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-300">
+              <AlertCircle className="h-3.5 w-3.5 text-red-400" />
+              Connection Failed
+            </div>
+          )}
+          {connectionStatus === 'untested' && (
+            <div className="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-800/80 px-3 py-1 text-xs font-medium text-zinc-300">
+              <HelpCircle className="h-3.5 w-3.5 text-zinc-400" />
+              Connection Untested
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Tracking Key Card */}
+      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl shadow-lg">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Key className="h-4 w-4 text-emerald-400" />
+            <h3 className="text-sm font-semibold text-white">Your Tracking Key</h3>
+          </div>
+          <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-mono text-emerald-300 border border-emerald-500/20">
+            USP Google Ads Tracker
+          </span>
+        </div>
+        <p className="mb-4 text-xs text-zinc-400 leading-relaxed">
+          Kunci unik ini mengidentifikasi akun Anda di setiap event kunjungan &amp; klik. Digunakan otomatis pada script pelacak di bawah.
+        </p>
+        <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-zinc-900/80 p-3">
+          <code className="flex-1 truncate font-mono text-xs sm:text-sm text-emerald-300 font-bold tracking-wide">
+            {trackingKey}
+          </code>
+          <button
+            onClick={() => copy(trackingKey, setCopiedKey)}
+            className="flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/20 px-3.5 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/30 shrink-0"
+          >
             {copiedKey ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+            {copiedKey ? 'Tersalin!' : 'Copy Key'}
           </button>
         </div>
       </section>
 
-      {/* Embed Snippet */}
-      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl">
+      {/* Embed Snippet Card */}
+      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl shadow-lg">
         <div className="mb-4 flex items-center gap-2">
           <Code2 className="h-4 w-4 text-cyan-400" />
-          <h3 className="text-sm font-semibold text-white">Embed Snippet (Landing Page)</h3>
+          <h3 className="text-sm font-semibold text-white">SDK Script Tag (Pasang di Landing Page)</h3>
         </div>
-        <p className="mb-4 text-xs text-zinc-400">Add this script tag to your landing page's <code className="text-cyan-300">&lt;head&gt;</code> or before <code className="text-cyan-300">&lt;/body&gt;</code>.</p>
+        <p className="mb-4 text-xs text-zinc-400 leading-relaxed">
+          Salin dan tempelkan 1 baris kode JavaScript SDK ini ke Landing Page Anda di dalam tag <code className="text-cyan-300 font-mono">&lt;head&gt;</code> atau sebelum <code className="text-cyan-300 font-mono">&lt;/body&gt;</code>. SDK akan melacak IP, GCLID, UTM, Keyword, &amp; Geo-lokasi secara otomatis!
+        </p>
         <div className="relative">
-          <pre className="overflow-x-auto rounded-lg border border-white/10 bg-zinc-950/80 p-4 text-xs text-zinc-300">
+          <pre className="overflow-x-auto rounded-lg border border-white/10 bg-zinc-950/90 p-4 text-xs text-cyan-300 font-mono leading-relaxed">
             <code>{snippet}</code>
           </pre>
-          <button onClick={() => copy(snippet, setCopiedSnippet)} className="absolute right-3 top-3 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 transition hover:bg-white/10">
+          <button
+            onClick={() => copy(snippet, setCopiedSnippet)}
+            className="absolute right-3 top-3 rounded-md border border-cyan-500/30 bg-cyan-500/20 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/30 flex items-center gap-1.5"
+          >
             {copiedSnippet ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+            {copiedSnippet ? 'Tersalin!' : 'Copy Script Snippet'}
           </button>
         </div>
       </section>
 
-      {/* Apps Script URL */}
-      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl">
-        <div className="mb-4 flex items-center gap-2">
-          <Link2 className="h-4 w-4 text-amber-400" />
-          <h3 className="text-sm font-semibold text-white">Google Spreadsheet Integration (Apps Script URL)</h3>
+      {/* Google Spreadsheet Integration Card */}
+      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl shadow-lg">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Link2 className="h-4 w-4 text-amber-400" />
+            <h3 className="text-sm font-semibold text-white">Integrasi Google Spreadsheet (Webhook URL)</h3>
+          </div>
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-semibold border ${
+            appsScriptUrl.trim()
+              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+              : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+          }`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${appsScriptUrl.trim() ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            {appsScriptUrl.trim() ? 'Webhook Configured' : 'Webhook Not Configured'}
+          </span>
         </div>
-        <p className="mb-4 text-xs text-zinc-400">
-          Every visitor and click event from your landing pages will automatically be forwarded in real-time to your Google Spreadsheet via this webhook URL.
+        <p className="mb-4 text-xs text-zinc-400 leading-relaxed">
+          Setiap pengunjung dan klik yang terekam pada Landing Page Anda akan otomatis dikirimkan ke Google Spreadsheet Anda secara real-time via URL Webhook di bawah ini.
         </p>
 
+        <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+          Google Apps Script Web App URL (<span className="text-emerald-400">apps_script_url</span>)
+        </label>
         <input
           type="url"
           value={appsScriptUrl}
           onChange={(e) => setAppsScriptUrl(e.target.value)}
           placeholder="https://script.google.com/macros/s/AKfycb.../exec"
-          className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2.5 text-sm text-white placeholder-zinc-600 outline-none transition focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 font-mono"
+          className="w-full rounded-lg border border-white/10 bg-zinc-900/80 px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-zinc-600 outline-none transition focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 font-mono"
         />
 
         {/* Apps Script Code Helper Button */}
@@ -216,10 +333,10 @@ function doPost(e) {
           <button
             type="button"
             onClick={() => setShowScriptHelper(!showScriptHelper)}
-            className="flex items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 transition"
+            className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition"
           >
             <FileCode className="h-3.5 w-3.5" />
-            {showScriptHelper ? 'Hide Google Apps Script Code' : 'Cara Setup & Kode Google Apps Script (Klik Disini)'}
+            {showScriptHelper ? 'Sembunyikan Panduan Kode Google Apps Script' : 'Cara Dapatkan URL Apps Script (Klik Disini)'}
             {showScriptHelper ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           </button>
 
@@ -227,12 +344,12 @@ function doPost(e) {
             <div className="mt-3 rounded-xl border border-white/10 bg-zinc-950/90 p-4 space-y-3">
               <div className="text-xs text-zinc-300 space-y-1">
                 <p className="font-semibold text-emerald-300">Langkah 1 Menit Setup Google Sheets:</p>
-                <ol className="list-decimal list-inside text-zinc-400 space-y-1 text-[11px]">
+                <ol className="list-decimal list-inside text-zinc-400 space-y-1 text-[11px] leading-relaxed">
                   <li>Buka spreadsheet baru di Google Sheets.</li>
                   <li>Klik menu <strong>Extensions &gt; Apps Script</strong>.</li>
                   <li>Hapus semua kode bawaan, lalu paste kode di bawah.</li>
-                  <li>Klik <strong>Deploy &gt; New deployment &gt; Web app</strong>.</li>
-                  <li>Set <em>Execute as: Me</em> dan <em>Who has access: Anyone</em>.</li>
+                  <li>Klik tombol <strong>Deploy &gt; New deployment &gt; Pilih Web app</strong>.</li>
+                  <li>Set <em>Execute as: Me</em> dan <em>Who has access: Anyone (Siapa saja)</em>.</li>
                   <li>Klik Deploy, izinkan akses, lalu salin Web App URL ke kolom input di atas!</li>
                 </ol>
               </div>
@@ -247,45 +364,46 @@ function doPost(e) {
                   className="absolute right-2 top-2 rounded border border-white/10 bg-white/10 px-2 py-1 text-[11px] text-zinc-200 hover:bg-white/20 transition flex items-center gap-1"
                 >
                   {copiedScript ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-                  {copiedScript ? 'Copied' : 'Copy Script'}
+                  {copiedScript ? 'Tersalin' : 'Salin Kode Script'}
                 </button>
               </div>
             </div>
           )}
         </div>
 
-        {/* Forwarding toggle */}
-        <div className="mt-4 flex items-center justify-between rounded-lg border border-white/10 bg-zinc-900/30 p-4">
+        {/* Forwarding active toggle switch */}
+        <div className="mt-5 flex items-center justify-between rounded-xl border border-white/10 bg-zinc-900/60 p-4">
           <div>
-            <div className="text-sm font-medium text-white">Event Forwarding to Google Sheets</div>
-            <div className="text-xs text-zinc-500">Kirim semua data impression & click secara realtime ke Spreadsheet</div>
+            <div className="text-xs sm:text-sm font-semibold text-white">Event Forwarding Active Switch</div>
+            <div className="text-[11px] text-zinc-400">Aktifkan/nonaktifkan penerusan data otomatis ke Google Spreadsheet Anda</div>
           </div>
-          <button onClick={handleToggleForwarding} className="transition">
+          <button type="button" onClick={handleToggleForwarding} className="transition" title="Toggle Forwarding">
             {forwardingActive ? (
-              <ToggleRight className="h-8 w-8 text-emerald-400" />
+              <ToggleRight className="h-9 w-9 text-emerald-400 transition transform hover:scale-105" />
             ) : (
-              <ToggleLeft className="h-8 w-8 text-zinc-600" />
+              <ToggleLeft className="h-9 w-9 text-zinc-600 transition transform hover:scale-105" />
             )}
           </button>
         </div>
 
         {/* Action buttons */}
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+        <div className="mt-6 flex flex-col sm:flex-row gap-3">
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-50"
+            className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-xs sm:text-sm font-bold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-50 shadow-lg shadow-emerald-500/20"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            Save Settings
+            Save Integration Settings
           </button>
+
           <button
             onClick={handleTestConnection}
             disabled={testing}
-            className="flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-zinc-200 transition hover:bg-white/10 disabled:opacity-50"
+            className="flex items-center justify-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-5 py-3 text-xs sm:text-sm font-semibold text-cyan-300 transition hover:bg-cyan-500/20 disabled:opacity-50"
           >
-            {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Test Connection (Kirim Data Uji)
+            {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 text-cyan-400" />}
+            Send Test Event
           </button>
         </div>
       </section>

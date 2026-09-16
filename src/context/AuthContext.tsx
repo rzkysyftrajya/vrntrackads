@@ -23,7 +23,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function loadProfile(uid: string) {
+  async function loadProfile(uid: string, currentUser?: User | null) {
+    const fallbackProfile: Profile = {
+      id: uid,
+      user_id: uid,
+      display_name: (currentUser || user)?.email?.split('@')[0] || 'VRN User',
+      apps_script_url: null,
+      tracking_key: uid,
+      forwarding_active: true,
+      created_at: new Date().toISOString(),
+    };
+
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -31,26 +41,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('user_id', uid)
         .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.warn('Could not fetch profiles row:', error.message);
+        setProfile(fallbackProfile);
+        return;
+      }
 
       if (!data) {
-        const { data: created, error: createError } = await supabase
+        // Attempt to create profile row
+        const { data: created } = await supabase
           .from('profiles')
-          .insert({ user_id: uid, display_name: null })
+          .insert({
+            user_id: uid,
+            display_name: fallbackProfile.display_name,
+            tracking_key: uid,
+            forwarding_active: true,
+          })
           .select('*')
           .maybeSingle();
-        if (createError) throw createError;
-        setProfile(created as Profile | null);
+
+        setProfile((created as Profile) || fallbackProfile);
       } else {
         setProfile(data as Profile);
       }
     } catch {
-      setProfile(null);
+      setProfile(fallbackProfile);
     }
   }
 
   async function refreshProfile() {
-    if (user) await loadProfile(user.id);
+    if (user) await loadProfile(user.id, user);
   }
 
   useEffect(() => {
@@ -60,9 +80,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .getSession()
       .then(({ data }) => {
         setSession(data.session);
-        setUser(data.session?.user ?? null);
-        if (data.session?.user) {
-          loadProfile(data.session.user.id).finally(() => setLoading(false));
+        const currentUser = data.session?.user ?? null;
+        setUser(currentUser);
+        if (currentUser) {
+          loadProfile(currentUser.id, currentUser).finally(() => setLoading(false));
         } else {
           setLoading(false);
         }
@@ -76,14 +97,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession);
-      setUser(newSession?.user ?? null);
+      const currentUser = newSession?.user ?? null;
+      setUser(currentUser);
       if (event === 'SIGNED_OUT') {
         setProfile(null);
       }
-      if (newSession?.user) {
-        (async () => {
-          await loadProfile(newSession.user.id);
-        })();
+      if (currentUser) {
+        loadProfile(currentUser.id, currentUser);
       }
     });
 
@@ -98,7 +118,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
-        // If email was unconfirmed or rate limited, attempt auto-confirming via backend API
         if (
           error.message.toLowerCase().includes('email not confirmed') ||
           error.message.toLowerCase().includes('invalid login credentials')
@@ -128,7 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signUp(email: string, password: string) {
     try {
-      // 1. Try server-side auto-confirm registration (bypasses email rate limit completely)
+      // 1. Try server-side auto-confirm registration
       try {
         const res = await fetch('/api/auth/register', {
           method: 'POST',
@@ -137,14 +156,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
 
         if (res.ok) {
-          // Immediately log in since user is already confirmed
           const loginRes = await supabase.auth.signInWithPassword({ email, password });
           if (!loginRes.error) {
             return { error: null };
           }
         }
       } catch {
-        // Backend API not reachable, fallback to direct Supabase Auth
+        // Fallback to direct Supabase Auth
       }
 
       // 2. Direct Supabase Auth fallback
@@ -164,7 +182,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: null };
       }
 
-      // Attempt immediate sign-in in case confirmation was disabled on Supabase dashboard
       const directLogin = await supabase.auth.signInWithPassword({ email, password });
       if (!directLogin.error) {
         return { error: null };

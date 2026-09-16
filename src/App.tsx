@@ -29,7 +29,7 @@ function AppContent() {
 
   return (
     <Layout currentPage={page} onNavigate={setPage}>
-      {page === 'overview' && <DashboardOverview />}
+      {page === 'overview' && <DashboardOverview onNavigate={setPage} />}
       {page === 'settings' && <SettingsPage />}
       {page === 'guide' && <InstallationGuide />}
     </Layout>
