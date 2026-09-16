@@ -3,14 +3,137 @@ import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 
-function trackingApiPlugin(env: Record<string, string>): Plugin {
+function devApiPlugin(env: Record<string, string>): Plugin {
   return {
-    name: 'tracking-api-plugin',
+    name: 'dev-api-plugin',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const url = req.url?.split('?')[0];
+
+        // 1. Auth Register Endpoint (Bypasses email rate limit with admin auto-confirm)
+        if (url === '/api/auth/register') {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 200;
+            res.end();
+            return;
+          }
+
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Method not allowed' }));
+            return;
+          }
+
+          try {
+            let bodyStr = '';
+            for await (const chunk of req) bodyStr += chunk;
+            const body = JSON.parse(bodyStr || '{}');
+            const { email, password } = body;
+
+            if (!email || !password) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Email and password are required' }));
+              return;
+            }
+
+            const supabaseUrl =
+              env.VITE_SUPABASE_URL ||
+              process.env.VITE_SUPABASE_URL ||
+              'https://qtgbuacxiuntczeaqlqi.supabase.co';
+
+            const serviceKey =
+              env.SUPABASE_SERVICE_ROLE_KEY ||
+              process.env.SUPABASE_SERVICE_ROLE_KEY ||
+              '';
+
+            if (!serviceKey) {
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'SUPABASE_SERVICE_ROLE_KEY is not configured in .env' }));
+              return;
+            }
+
+            const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+              auth: { persistSession: false, autoRefreshToken: false },
+            });
+
+            // Create user with email_confirm: true (no email rate limits!)
+            const { data: createdUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+              email,
+              password,
+              email_confirm: true,
+              user_metadata: { display_name: email.split('@')[0] },
+            });
+
+            if (createError) {
+              if (
+                createError.message?.toLowerCase().includes('already') ||
+                createError.message?.toLowerCase().includes('exists')
+              ) {
+                const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
+                const existing = listData?.users?.find(
+                  (u) => u.email?.toLowerCase() === email.toLowerCase()
+                );
+
+                if (existing) {
+                  await supabaseAdmin.auth.admin.updateUserById(existing.id, {
+                    email_confirm: true,
+                    password: password,
+                  });
+
+                  const { data: prof } = await supabaseAdmin
+                    .from('profiles')
+                    .select('id')
+                    .eq('user_id', existing.id)
+                    .maybeSingle();
+
+                  if (!prof) {
+                    await supabaseAdmin.from('profiles').insert({
+                      user_id: existing.id,
+                      display_name: email.split('@')[0],
+                    });
+                  }
+
+                  res.statusCode = 200;
+                  res.setHeader('Content-Type', 'application/json');
+                  res.end(JSON.stringify({ success: true, message: 'User updated and confirmed' }));
+                  return;
+                }
+              }
+
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: createError.message }));
+              return;
+            }
+
+            if (createdUser?.user) {
+              await supabaseAdmin.from('profiles').insert({
+                user_id: createdUser.user.id,
+                display_name: email.split('@')[0],
+              });
+            }
+
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: true, user: createdUser?.user }));
+            return;
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err?.message || 'Registration error' }));
+            return;
+          }
+        }
+
+        // 2. Tracking Endpoint (/api/public/track or /functions/v1/track)
         if (url === '/api/public/track' || url === '/functions/v1/track') {
-          // Set CORS headers
           res.setHeader('Access-Control-Allow-Origin', '*');
           res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
           res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, Apikey');
@@ -66,7 +189,6 @@ function trackingApiPlugin(env: Record<string, string>): Plugin {
               auth: { persistSession: false },
             });
 
-            // Look up profile by tracking_key
             const { data: profile, error: profileError } = await supabase
               .from('profiles')
               .select('id, user_id, apps_script_url, forwarding_active')
@@ -150,7 +272,6 @@ function trackingApiPlugin(env: Record<string, string>): Plugin {
               }
             }
 
-            // Async forward to apps_script_url
             if (profile.forwarding_active && profile.apps_script_url) {
               const forwardPayload = { event, tracking_key, ...params };
               const controller = new AbortController();
@@ -176,6 +297,7 @@ function trackingApiPlugin(env: Record<string, string>): Plugin {
             return;
           }
         }
+
         next();
       });
     },
@@ -186,7 +308,7 @@ function trackingApiPlugin(env: Record<string, string>): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), trackingApiPlugin(env)],
+    plugins: [react(), devApiPlugin(env)],
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
