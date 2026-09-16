@@ -44,7 +44,7 @@ export default async function handler(req: any, res: any) {
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('id, user_id, apps_script_url, forwarding_active')
-      .eq('tracking_key', tracking_key)
+      .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
       .maybeSingle();
 
     if (profileError || !profile) {

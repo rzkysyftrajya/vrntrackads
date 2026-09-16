@@ -3,7 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, Authorization, X-Client-Info, Apikey, Content-Type",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -32,7 +32,7 @@ function parseUserAgent(ua: string): { device: string; browser: string } {
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return new Response("ok", { status: 200, headers: corsHeaders });
   }
 
   if (req.method !== "POST") {
@@ -68,7 +68,7 @@ Deno.serve(async (req: Request) => {
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("id, user_id, apps_script_url, forwarding_active")
-      .eq("tracking_key", tracking_key)
+      .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
       .maybeSingle();
 
     if (profileError || !profile) {

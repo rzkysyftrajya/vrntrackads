@@ -38,7 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
-        .eq('user_id', uid)
+        .or(`user_id.eq.${uid},id.eq.${uid}`)
         .maybeSingle();
 
       if (error) {
@@ -48,10 +48,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (!data) {
-        // Attempt to create profile row
+        // Attempt to create profile row with fallback
         const { data: created } = await supabase
           .from('profiles')
           .insert({
+            id: uid,
             user_id: uid,
             display_name: fallbackProfile.display_name,
             tracking_key: uid,
