@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Copy, Check, FileCode, Globe, Code2 as ReactIcon, Search, Table, ShieldCheck, Zap } from 'lucide-react';
+import { Copy, Check, FileCode, Globe, ShoppingCart, Code2 as ReactIcon, Search, Table } from 'lucide-react';
 
-type TabId = 'html' | 'nextjs' | 'react' | 'spreadsheet' | 'wordpress' | 'googleads';
+type TabId = 'html' | 'wordpress' | 'react' | 'shopify' | 'googleads' | 'spreadsheet';
 
 const tabs: { id: TabId; label: string; icon: typeof FileCode }[] = [
-  { id: 'html', label: 'HTML / PHP Native', icon: FileCode },
-  { id: 'nextjs', label: 'Next.js (App / Pages Router)', icon: ReactIcon },
-  { id: 'react', label: 'React SPA', icon: ReactIcon },
+  { id: 'html', label: 'HTML Landing Page', icon: FileCode },
   { id: 'spreadsheet', label: 'Google Spreadsheet', icon: Table },
   { id: 'wordpress', label: 'WordPress', icon: Globe },
+  { id: 'react', label: 'React / Next.js', icon: ReactIcon },
+  { id: 'shopify', label: 'Shopify', icon: ShoppingCart },
   { id: 'googleads', label: 'Google Ads UTM', icon: Search },
 ];
 
@@ -19,12 +19,13 @@ export default function InstallationGuide() {
   const [copied, setCopied] = useState(false);
 
   const trackingKey = profile?.tracking_key || 'YOUR_TRACKING_KEY';
-  const domain = window.location.origin;
-  const scriptTag = `<script src="${domain}/track.js" data-tracking-id="${trackingKey}" async defer></script>`;
+  const sdkDomain = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')
+    ? 'https://vrnadvertiser.vercel.app'
+    : window.location.origin;
+  const snippet = `<script src="${sdkDomain}/track.js" data-tracking-id="${trackingKey}"></script>`;
 
   const googleAppsScriptCode = `/**
- * VRN TRACK ADS — Google Sheets Webhook Script v2.0
- * Fitur: Auto Sheet Creation, Click & Impression Separation, Bot Filtered Sync
+ * VRN TRACK ADS - Google Sheets Webhook Script
  * 
  * PANDUAN PEMASANGAN:
  * 1. Buka Google Sheets baru di spreadsheet.google.com
@@ -52,9 +53,9 @@ function doPost(e) {
       if (eventType === 'click') {
         targetSheet.appendRow([
           'Timestamp', 'Tracking Key', 'Event', 'GCLID', 'UTM Source', 
-          'UTM Medium', 'UTM Campaign', 'Keyword', 'Target CTA', 'Device', 'Landing Page', 'Country', 'City', 'IP Address'
+          'UTM Medium', 'UTM Campaign', 'Keyword', 'Device', 'Landing Page', 'Country', 'City', 'IP Address'
         ]);
-        targetSheet.getRange(1, 1, 1, 14).setFontWeight('bold').setBackground('#e2e8f0');
+        targetSheet.getRange(1, 1, 1, 13).setFontWeight('bold').setBackground('#e2e8f0');
       } else {
         targetSheet.appendRow([
           'Timestamp', 'Tracking Key', 'Event', 'Device', 'Browser', 
@@ -75,7 +76,6 @@ function doPost(e) {
         data.utm_medium || '',
         data.utm_campaign || '',
         data.keyword || '',
-        data.click_target || 'button/link',
         data.device || '',
         data.landing_page || '',
         data.country || '',
@@ -105,132 +105,33 @@ function doPost(e) {
   }
 }`;
 
-  const nextJsSnippet = `// =======================================================
-// OPSI 1: Next.js 13+ / 14+ / 15+ (App Router)
-// File: app/layout.tsx
-// =======================================================
-import Script from 'next/script';
-
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <html lang="id">
-      <head>
-        <Script
-          src="${domain}/track.js"
-          data-tracking-id="${trackingKey}"
-          strategy="afterInteractive"
-        />
-      </head>
-      <body>{children}</body>
-    </html>
-  );
-}
-
-// =======================================================
-// OPSI 2: Next.js (Pages Router)
-// File: pages/_app.tsx atau pages/_document.tsx
-// =======================================================
-import Script from 'next/script';
-import type { AppProps } from 'next/app';
-
-export default function MyApp({ Component, pageProps }: AppProps) {
-  return (
-    <>
-      <Script
-        src="${domain}/track.js"
-        data-tracking-id="${trackingKey}"
-        strategy="afterInteractive"
-      />
-      <Component {...pageProps} />
-    </>
-  );
-}`;
-
-  const reactSpaSnippet = `// =======================================================
-// React SPA (Vite / CRA)
-// Opsi 1: Tambahkan langsung di index.html (Paling Disarankan)
-// =======================================================
-<!-- Di dalam file index.html sebelum tag </head> atau </body> -->
-${scriptTag}
-
-// =======================================================
-// Opsi 2: Manual trigger di komponen CTA / WhatsApp Button
-// =======================================================
-function WhatsAppCTAButton() {
-  const handleWhatsAppClick = () => {
-    // SDK berjalan otomatis tanpa memanggil ini pun sudah terekam,
-    // namun Anda juga bisa mengirim custom data secara manual:
-    if (window.VRNTrack) {
-      window.VRNTrack.trackClick({
-        click_target: 'whatsapp_custom',
-        button_name: 'Tombol Konsultasi Utama'
-      });
-    }
-  };
-
-  return (
-    <a
-      href="https://wa.me/6281234567890?text=Halo%20saya%20tertarik"
-      onClick={handleWhatsAppClick}
-      className="btn-whatsapp"
-    >
-      Hubungi via WhatsApp
-    </a>
-  );
-}`;
-
   const snippets: Record<TabId, { title: string; code: string; note?: string }> = {
     html: {
-      title: 'Pemasangan pada Landing Page HTML / PHP Native',
-      code: `<!-- Letakkan script ini di dalam tag <head> atau sebelum tag </body> -->
-${scriptTag}
-
-<!-- CONTOH TOMBOL CTA / WHATSAPP: -->
-<!-- SDK otomatis mendeteksi link wa.me, tel:, atau elemen dengan atribut data-vrn-click -->
-<a href="https://wa.me/6281234567890" class="btn-wa">
-  Chat WhatsApp (Otomatis Terlacak)
-</a>`,
-      note: 'Script berjalan 100% asynchronous dan non-blocking (async defer). Saat pengunjung mengklik tombol WhatsApp atau CTA, navigasi langsung terbuka instan tanpa delay atau layout shift (CLS).',
-    },
-    nextjs: {
-      title: 'Pemasangan pada Next.js (App Router & Pages Router)',
-      code: nextJsSnippet,
-      note: 'Menggunakan strategy="afterInteractive" menjamin performa Google Lighthouse dan Core Web Vitals (LCP, FID, CLS) tetap 100.',
-    },
-    react: {
-      title: 'Pemasangan pada React Single Page Application (Vite / CRA)',
-      code: reactSpaSnippet,
-      note: 'VRNTrack mengekspos window.VRNTrack secara global sehingga dapat dipanggil dari hooks atau event handler mana pun di dalam aplikasi React.',
+      title: 'Pasang pada Landing Page HTML / PHP',
+      code: `<!-- Tambahkan script ini di dalam tag <head> atau sebelum </body> pada Landing Page Anda -->\n${snippet}`,
+      note: 'SDK akan otomatis merekam Impression saat halaman dimuat dan merekam Click saat pengunjung menekan tombol CTA / link.',
     },
     spreadsheet: {
-      title: 'Integrasi Otomatis Google Spreadsheet (Apps Script Webhook)',
+      title: 'Integrasi Otomatis Google Spreadsheet (Apps Script)',
       code: googleAppsScriptCode,
-      note: 'Setelah Deploy di Google Apps Script, copy Web App URL lalu paste di menu Integration Settings. Bot fraud dan duplikasi gclid disaring secara otomatis sebelum masuk ke Spreadsheet.',
+      note: 'Setelah Deploy di Google Apps Script, copy Web App URL lalu paste di menu Integration Settings > Google Apps Script URL. Setiap ada pengunjung / klik, data langsung masuk ke Google Sheet Anda secara realtime!',
     },
     wordpress: {
-      title: 'Pemasangan pada WordPress (Header Footer / functions.php)',
-      code: `// Opsi 1: Pasang di functions.php tema aktif Anda
-add_action('wp_head', function() {
-  echo '<script src="${domain}/track.js" data-tracking-id="${trackingKey}" async defer></script>\\n';
-});
-
-// Opsi 2: Gunakan plugin "WPCode" atau "Header and Footer Scripts"
-// Lalu paste snippet berikut ke bagian Header:
-${scriptTag}`,
-      note: 'Kompatibel dengan semua builder WordPress (Elementor, Divi, Gutenberg, Bricks).',
+      title: 'Pasang pada WordPress (Header Footer Code Manager / functions.php)',
+      code: `// Opsi 1: Pasang di functions.php tema WordPress Anda\nadd_action('wp_head', function() {\n  echo '<script src="${sdkDomain}/track.js" data-tracking-id="${trackingKey}"></script>\\n';\n});\n\n// Opsi 2: Gunakan plugin "Header and Footer Scripts" lalu paste script di bawah:\n// ${snippet}`,
+    },
+    react: {
+      title: 'Pasang pada Next.js / React (Root Layout)',
+      code: `// Di root layout.tsx atau _app.tsx:\nimport Script from 'next/script';\n\nexport default function RootLayout({ children }: { children: React.ReactNode }) {\n  return (\n    <html>\n      <head>\n        <Script\n          src="${sdkDomain}/track.js"\n          data-tracking-id="${trackingKey}"\n          strategy="afterInteractive"\n        />\n      </head>\n      <body>{children}</body>\n    </html>\n  );\n}`,
+    },
+    shopify: {
+      title: 'Pasang pada Shopify (theme.liquid)',
+      code: `<!-- Buka Shopify Admin > Online Store > Themes > Edit Code > theme.liquid -->\n<!-- Tambahkan script ini sebelum tag </head> -->\n${snippet}`,
     },
     googleads: {
-      title: 'Google Ads Final URL Suffix & Parameter Tracking',
-      code: `# Di akun Google Ads Anda:
-# Masuk ke: Settings > Account settings > Tracking > Final URL suffix
-# Tempelkan parameter berikut:
-
-{ignore}&utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&keyword={keyword}&device={device}&gclid={gclid}`,
-      note: 'SDK otomatis menangkap gclid, utm_source, utm_medium, utm_campaign, keyword, dan device untuk pelaporan konversi & click fraud.',
+      title: 'Google Ads Final URL Suffix & UTM Tracking',
+      code: `# Di akun Google Ads Anda:\n# Settings > Account settings > Tracking > Final URL suffix\n#\n# Tambahkan parameter ini agar data Google Ads terekam lengkap:\n\n{ignore}&utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&keyword={keyword}&gclid={gclid}`,
+      note: 'SDK VRN TRACK ADS otomatis membaca parameter gclid, utm_source, utm_medium, utm_campaign, dan keyword dari URL iklan.',
     },
   };
 
@@ -244,38 +145,14 @@ ${scriptTag}`,
 
   return (
     <div className="max-w-4xl space-y-6">
-      {/* Header Banner */}
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-            <Zap className="h-4 w-4 text-emerald-400" />
-          </div>
-          <h3 className="text-sm font-semibold text-white">Panduan Integrasi & Pemasangan SDK</h3>
-        </div>
-        <p className="text-xs text-zinc-400 leading-relaxed mb-4">
-          Pilih platform Anda di bawah ini dan salin snippet pelacak ke Landing Page Anda. SDK secara otomatis menangkap parameter iklan Google Ads (<code className="text-emerald-400">gclid</code>, <code className="text-emerald-400">utm_*</code>), mendeteksi traffic bot, dan mengirim data langsung ke dashboard serta Google Spreadsheet Anda tanpa mengganggu kecepatan halaman.
+        <h3 className="mb-2 text-sm font-semibold text-white">Panduan Integrasi & Pemasangan SDK</h3>
+        <p className="mb-6 text-xs text-zinc-400">
+          Pilih platform Anda di bawah ini dan salin snippet pelacak ke Landing Page Anda. SDK secara otomatis menangkap parameter iklan Google Ads (gclid, utm), jenis perangkat, negara/kota, referrer, serta mengirim data langsung ke dashboard dan Google Spreadsheet Anda.
         </p>
 
-        {/* Feature Highlights */}
-        <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/5 text-[11px] text-zinc-400">
-          <span className="flex items-center gap-1.5 text-emerald-300">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-            Advanced Bot & Click Fraud Filter
-          </span>
-          <span className="text-zinc-600">•</span>
-          <span className="flex items-center gap-1.5 text-cyan-300">
-            <Zap className="h-3.5 w-3.5 text-cyan-400" />
-            Zero UX Interference (Non-Blocking & Keepalive)
-          </span>
-          <span className="text-zinc-600">•</span>
-          <span className="flex items-center gap-1.5 text-zinc-300">
-            <Check className="h-3.5 w-3.5 text-emerald-400" />
-            Auto-Detect WhatsApp & CTA
-          </span>
-        </div>
-
         {/* Tab buttons */}
-        <div className="mt-6 mb-6 flex flex-wrap gap-2">
+        <div className="mb-6 flex flex-wrap gap-2">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -316,7 +193,7 @@ ${scriptTag}`,
           </pre>
           {current.note && (
             <p className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-xs text-cyan-200/90 leading-relaxed">
-              <strong>Info Performa & Keamanan:</strong> {current.note}
+              <strong>Info:</strong> {current.note}
             </p>
           )}
         </div>
@@ -325,31 +202,16 @@ ${scriptTag}`,
       {/* Quick reference */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <InfoCard
-          title="Proteksi Bot & Fraud"
-          items={[
-            'Deteksi Webdriver & Headless Browser',
-            'Screen Dimension Anomaly Filter',
-            'Deduplikasi GCLID 24 Jam',
-            'Spam Request Rate-Limiting',
-          ]}
+          title="Auto-Detected URL"
+          items={['gclid (Google Ads Click ID)', 'utm_source & utm_medium', 'utm_campaign', 'keyword']}
         />
         <InfoCard
-          title="Zero UX Interference"
-          items={[
-            'Non-blocking async & defer',
-            'fetch keepalive & sendBeacon',
-            'Klik WhatsApp instan tanpa lag',
-            'Silent error handling 100%',
-          ]}
+          title="Captured Device & Geo"
+          items={['Device (Mobile/Desktop/Tablet)', 'Browser & IP Address', 'Negara & Kota', 'Referrer URL']}
         />
         <InfoCard
-          title="Data Real-Time Akurat"
-          items={[
-            'Auto Track Impression & Clicks',
-            'Sinkronisasi Google Spreadsheet',
-            'Live Traffic Feed Dashboard',
-            'Filter Otomatis Sebelum Sync',
-          ]}
+          title="Auto-Fired Events"
+          items={['Impression (Saat page load)', 'Click (Saat klik CTA/Tombol)', 'Real-Time Sync ke Spreadsheet']}
         />
       </div>
     </div>

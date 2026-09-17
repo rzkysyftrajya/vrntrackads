@@ -41,6 +41,32 @@ function checkRateLimit(key: string): boolean {
   return true;
 }
 
+// ─── Rapid-click spam detection (per IP, per event type) ────────────────────
+// Jika IP yang sama mengirim event 'click' < 10 detik setelah klik sebelumnya,
+// tandai sebagai SPAM_SUSPECT.
+const SPAM_CLICK_WINDOW_MS = 10 * 1000; // 10 detik
+const lastClickTimestampMap = new Map<string, number>(); // ip → timestamp ms
+
+function checkSpamSuspect(ip: string): boolean {
+  const now = Date.now();
+  const lastTs = lastClickTimestampMap.get(ip);
+  lastClickTimestampMap.set(ip, now);
+
+  // Cleanup map agar tidak membengkak
+  if (lastClickTimestampMap.size > 5000) {
+    const cutoff = now - SPAM_CLICK_WINDOW_MS * 10;
+    for (const [k, v] of lastClickTimestampMap.entries()) {
+      if (v < cutoff) lastClickTimestampMap.delete(k);
+    }
+  }
+
+  if (lastTs !== undefined && now - lastTs < SPAM_CLICK_WINDOW_MS) {
+    return true; // SPAM_SUSPECT
+  }
+  return false;
+}
+
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -99,7 +125,7 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Look up profile by tracking_key, user_id, or id
+    // Look up the profile by tracking_key to get user_id + forwarding config
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("id, user_id, apps_script_url, forwarding_active")
@@ -107,21 +133,20 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (profileError || !profile) {
-      console.error(`[Tracking Error] Key not found: ${tracking_key}`, profileError);
-      return jsonResponse({ error: `Invalid tracking key: ${tracking_key}` }, 404);
+      return jsonResponse({ error: "Invalid tracking key" }, 404);
     }
 
     const resolvedUserId = profile.user_id || profile.id;
-    const userAgent = req.headers.get("user-agent") || params.user_agent || "";
+    const userAgent = req.headers.get("user-agent") || "";
     const { device: uaDevice, browser: uaBrowser } = parseUserAgent(userAgent);
 
+    // Geo from CF / Vercel headers
     const country =
       req.headers.get("x-vercel-ip-country") ||
       req.headers.get("cf-ipcountry") ||
       req.headers.get("x-country-code") ||
       params.country ||
       "Unknown";
-      
     const city =
       req.headers.get("x-vercel-ip-city") ||
       req.headers.get("cf-ipcity") ||
@@ -181,8 +206,24 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // 4. Rapid-click Spam Detection (per IP, < 10 detik)
+    let isSpamSuspect = false;
+    if (event === "click" && !isBot) {
+      isSpamSuspect = checkSpamSuspect(ip);
+      if (isSpamSuspect) {
+        detectionReasons.push("rapid_click_spam");
+      }
+    }
+
+    // Tentukan status akhir event
+    const eventStatus = isBot || isDuplicateGclid
+      ? "BOT_FILTERED"
+      : isSpamSuspect
+        ? "SPAM_SUSPECT"
+        : "OK";
+
     const commonFields = {
-      user_id: resolvedUserId,
+      user_id: profile.user_id,
       tracking_key,
       device: params.device || uaDevice,
       ip_address: ip,
@@ -199,7 +240,6 @@ Deno.serve(async (req: Request) => {
         referrer,
       });
       if (error) {
-        console.error("[Insert Impression Error]", error);
         return jsonResponse({ error: "Failed to save impression", details: error.message }, 500);
       }
     } else {
@@ -212,22 +252,19 @@ Deno.serve(async (req: Request) => {
         keyword: params.keyword || null,
       });
       if (error) {
-        console.error("[Insert Click Error]", error);
         return jsonResponse({ error: "Failed to save click", details: error.message }, 500);
       }
     }
 
-    // -------------------------------------------------------------
-    // FORWARDING TO GOOGLE APPS SCRIPT
-    // Protection: STRICT FILTERING (Bots & duplicate clicks are NOT forwarded!)
-    // -------------------------------------------------------------
-    const shouldForward =
+    // Forward to Google Apps Script URL
+    // BOT_FILTERED → tidak dikirim ke Sheets
+    // SPAM_SUSPECT / OK → dikirim, dengan field status agar Sheets bisa memberi warna
+    const shouldForwardToSheets =
       profile.forwarding_active !== false &&
-      Boolean(profile.apps_script_url) &&
-      !isBot &&
-      !isDuplicateGclid;
+      profile.apps_script_url &&
+      eventStatus !== "BOT_FILTERED";
 
-    if (shouldForward && profile.apps_script_url) {
+    if (shouldForwardToSheets) {
       const forwardPayload = {
         event,
         tracking_key,
@@ -239,52 +276,49 @@ Deno.serve(async (req: Request) => {
         browser: uaBrowser,
         landing_page: landingPage,
         referrer,
-        gclid,
+        gclid: params.gclid || null,
         utm_source: params.utm_source || null,
         utm_medium: params.utm_medium || null,
         utm_campaign: params.utm_campaign || null,
         keyword: params.keyword || null,
         timestamp: new Date().toISOString(),
-        session_id: session_id || null,
-        fingerprint: fingerprint || null,
-        click_target: params.click_target || null,
-        target_text: params.target_text || null,
+        // ── Status anti-spam ──────────────────────────────────────────────
+        status: eventStatus,                          // "OK" | "SPAM_SUSPECT"
+        spam_suspect: isSpamSuspect,                  // true → warna baris MERAH di Sheets
+        detection_reasons: detectionReasons.join(",") || null,
+        ...params,
       };
 
       const forwardPromise = (async () => {
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 8000);
-          
-          // Using text/plain & redirect: follow prevents Apps Script CORS / 302 blocks
-          const res = await fetch(profile.apps_script_url!, {
+
+          // Menggunakan redirect: 'follow' dan text/plain agar tidak diblokir Apps Script CORS / 302
+          await fetch(profile.apps_script_url!, {
             method: "POST",
-            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify(forwardPayload),
-            redirect: "follow",
             signal: controller.signal,
           });
           clearTimeout(timeout);
-          console.log(`[Forwarding Success] Status ${res.status} to Apps Script`);
-        } catch (err: any) {
-          console.warn(`[Forwarding Warning] Failed to forward to Apps Script: ${err?.message || err}`);
+        } catch {
+          // forwarding failure is non-fatal
         }
       })();
 
-      // @ts-ignore
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
-        // @ts-ignore
         EdgeRuntime.waitUntil(forwardPromise);
-      } else {
-        forwardPromise.catch(() => {});
       }
-    } else if (isBot || isDuplicateGclid) {
+    } else if (eventStatus === "BOT_FILTERED") {
       console.log(`[Bot Filtered] Event ${event} withheld from Google Sheets. Reasons: ${detectionReasons.join(", ")}`);
     }
 
     return jsonResponse({
       success: true,
       event,
+      status: eventStatus,
+      spam_suspect: isSpamSuspect,
       filtered_bot: isBot || isDuplicateGclid,
     });
   } catch (err: any) {

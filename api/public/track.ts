@@ -32,6 +32,29 @@ function checkRateLimit(key: string): boolean {
   return true;
 }
 
+// ─── Rapid-click spam detection (per IP, < 10 detik) ────────────────────────
+const SPAM_CLICK_WINDOW_MS = 10 * 1000;
+const lastClickTimestampMap = new Map<string, number>();
+
+function checkSpamSuspect(ip: string): boolean {
+  const now = Date.now();
+  const lastTs = lastClickTimestampMap.get(ip);
+  lastClickTimestampMap.set(ip, now);
+
+  if (lastClickTimestampMap.size > 5000) {
+    const cutoff = now - SPAM_CLICK_WINDOW_MS * 10;
+    for (const [k, v] of lastClickTimestampMap.entries()) {
+      if (v < cutoff) lastClickTimestampMap.delete(k);
+    }
+  }
+
+  if (lastTs !== undefined && now - lastTs < SPAM_CLICK_WINDOW_MS) {
+    return true; // SPAM_SUSPECT
+  }
+  return false;
+}
+
+
 export default async function handler(req: any, res: any) {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -157,6 +180,22 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    // 4. Rapid-click Spam Detection (per IP, < 10 detik)
+    let isSpamSuspect = false;
+    if (event === 'click' && !isBot) {
+      isSpamSuspect = checkSpamSuspect(ip);
+      if (isSpamSuspect) {
+        detectionReasons.push('rapid_click_spam');
+      }
+    }
+
+    // Tentukan status akhir event
+    const eventStatus = isBot || isDuplicateGclid
+      ? 'BOT_FILTERED'
+      : isSpamSuspect
+        ? 'SPAM_SUSPECT'
+        : 'OK';
+
     const commonFields = {
       user_id: profile.user_id,
       tracking_key,
@@ -190,12 +229,13 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // Forwarding to Google Apps Script only if NOT bot and NOT duplicate
+    // Forwarding ke Google Apps Script
+    // BOT_FILTERED → tidak dikirim ke Sheets
+    // SPAM_SUSPECT / OK → dikirim dengan field status agar Sheets bisa memberi warna merah
     const shouldForward =
       profile.forwarding_active !== false &&
       Boolean(profile.apps_script_url) &&
-      !isBot &&
-      !isDuplicateGclid;
+      eventStatus !== 'BOT_FILTERED';
 
     if (shouldForward && profile.apps_script_url) {
       const forwardPayload = {
@@ -219,8 +259,12 @@ export default async function handler(req: any, res: any) {
         fingerprint: fingerprint || null,
         click_target: params.click_target || null,
         target_text: params.target_text || null,
+        // ── Status anti-spam ──────────────────────────────────────────────
+        status: eventStatus,                          // "OK" | "SPAM_SUSPECT"
+        spam_suspect: isSpamSuspect,                  // true → warna baris MERAH di Sheets
+        detection_reasons: detectionReasons.join(',') || null,
       };
-      
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       fetch(profile.apps_script_url, {
@@ -237,6 +281,8 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({
       success: true,
       event,
+      status: eventStatus,
+      spam_suspect: isSpamSuspect,
       filtered_bot: isBot || isDuplicateGclid,
     });
   } catch (err: any) {

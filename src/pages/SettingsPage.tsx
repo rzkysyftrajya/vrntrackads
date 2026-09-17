@@ -45,8 +45,10 @@ export default function SettingsPage() {
   }, [profile]);
 
   const trackingKey = profile?.tracking_key || user?.id || 'YOUR_TRACKING_KEY';
-  const domain = window.location.origin;
-  const snippet = `<script src="${domain}/track.js" data-tracking-id="${trackingKey}"></script>`;
+  const sdkDomain = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')
+    ? 'https://vrnadvertiser.vercel.app'
+    : window.location.origin;
+  const snippet = `<script src="${sdkDomain}/track.js" data-tracking-id="${trackingKey}"></script>`;
 
   const appsScriptTemplate = `/**
  * VRN TRACK ADS - Google Sheets Webhook Script
@@ -177,7 +179,7 @@ function doPost(e) {
       const payload = {
         event: 'impression',
         tracking_key: trackingKey,
-        landing_page: `${domain}/test-connection-page`,
+        landing_page: `${sdkDomain}/test-connection-page`,
         referrer: 'vrn-track-ads-test',
         device: 'Desktop',
         browser: 'Chrome Test',

@@ -49,6 +49,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
   });
   const [loading, setLoading] = useState(true);
   const [simulating, setSimulating] = useState(false);
+  const [chartReady, setChartReady] = useState(false);
 
   const trackingKey = profile?.tracking_key || profile?.user_id;
 
@@ -111,7 +112,14 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         if (days[key]) days[key].clicks++;
       });
 
-      setTimeline(Object.entries(days).map(([date, v]) => ({ date, ...v })));
+      const newTimeline = Object.entries(days).map(([date, v]) => ({ date, ...v }));
+      chartAnimKey.current += 1;
+      setChartReady(false);
+      setTimeline(newTimeline);
+      // Defer so React resets height to 0 first, then animates up
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setChartReady(true));
+      });
 
       const isForwarding = Boolean(profile?.apps_script_url && profile?.forwarding_active);
 
@@ -191,6 +199,16 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                 ctr: newImp > 0 ? (prev.totalClicks / newImp) * 100 : 0,
               };
             });
+            // Update today's bar in the chart
+            const today = new Date().toISOString().slice(0, 10);
+            setTimeline((prev) =>
+              prev.map((pt) =>
+                pt.date === today ? { ...pt, impressions: pt.impressions + 1 } : pt
+              )
+            );
+            chartAnimKey.current += 1;
+            setChartReady(false);
+            requestAnimationFrame(() => requestAnimationFrame(() => setChartReady(true)));
           }
         }
       )
@@ -228,6 +246,16 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                 ctr: prev.totalImpressions > 0 ? (newClicks / prev.totalImpressions) * 100 : 0,
               };
             });
+            // Update today's bar in the chart
+            const today = new Date().toISOString().slice(0, 10);
+            setTimeline((prev) =>
+              prev.map((pt) =>
+                pt.date === today ? { ...pt, clicks: pt.clicks + 1 } : pt
+              )
+            );
+            chartAnimKey.current += 1;
+            setChartReady(false);
+            requestAnimationFrame(() => requestAnimationFrame(() => setChartReady(true)));
           }
         }
       )
@@ -443,24 +471,38 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           </div>
         </div>
 
-        <div className="flex h-56 items-end justify-between gap-2 sm:gap-4 border-b border-white/5 pb-2">
-          {timeline.map((point) => (
+        <div
+          className="flex h-56 items-end justify-between gap-2 sm:gap-4 border-b border-white/5 pb-2"
+        >
+          {timeline.map((point, i) => (
             <div key={point.date} className="group flex flex-1 flex-col items-center gap-2">
               <div className="flex h-full w-full items-end justify-center gap-1.5">
+                {/* Impression Bar */}
                 <div
-                  className="relative w-full max-w-[28px] rounded-t-md bg-gradient-to-t from-emerald-600/40 to-emerald-400 transition-all duration-300 group-hover:from-emerald-500/60 group-hover:to-emerald-300"
+                  className="relative w-full max-w-[28px] rounded-t-md bg-gradient-to-t from-emerald-600/40 to-emerald-400 group-hover:from-emerald-500/60 group-hover:to-emerald-300"
                   style={{
-                    height: point.impressions > 0 ? `${(point.impressions / maxVal) * 100}%` : '4px',
+                    height: chartReady
+                      ? point.impressions > 0
+                        ? `${(point.impressions / maxVal) * 100}%`
+                        : '4px'
+                      : '0px',
+                    transition: `height 0.6s cubic-bezier(0.34,1.56,0.64,1) ${i * 60}ms`,
                   }}
                 >
                   <span className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-emerald-300 opacity-0 transition group-hover:opacity-100 z-10 pointer-events-none">
                     {point.impressions} imp
                   </span>
                 </div>
+                {/* Click Bar */}
                 <div
-                  className="relative w-full max-w-[28px] rounded-t-md bg-gradient-to-t from-cyan-600/40 to-cyan-400 transition-all duration-300 group-hover:from-cyan-500/60 group-hover:to-cyan-300"
+                  className="relative w-full max-w-[28px] rounded-t-md bg-gradient-to-t from-cyan-600/40 to-cyan-400 group-hover:from-cyan-500/60 group-hover:to-cyan-300"
                   style={{
-                    height: point.clicks > 0 ? `${(point.clicks / maxVal) * 100}%` : '4px',
+                    height: chartReady
+                      ? point.clicks > 0
+                        ? `${(point.clicks / maxVal) * 100}%`
+                        : '4px'
+                      : '0px',
+                    transition: `height 0.6s cubic-bezier(0.34,1.56,0.64,1) ${i * 60 + 30}ms`,
                   }}
                 >
                   <span className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-cyan-300 opacity-0 transition group-hover:opacity-100 z-10 pointer-events-none">
