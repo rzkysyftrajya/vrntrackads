@@ -1,401 +1,93 @@
-import type { IncomingMessage, ServerResponse } from 'http';
 import { createClient } from '@supabase/supabase-js';
 
-interface RequestWithBody extends IncomingMessage {
-  body?: unknown;
-}
+const supabaseUrl =
+  process.env.SUPABASE_URL ||
+  process.env.VITE_SUPABASE_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  '';
 
-const BOT_UA_REGEX = /bot|crawler|spider|headless|puppeteer|selenium|playwright|phantom|curl|wget|python|postman|node-fetch|axios|go-http-client|apachebench|ahrefs|semrush|petalbot|bytespider|yandex|facebookexternalhit|bingbot|googlebot|slurp|duckduckbot/i;
+const supabaseServiceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  '';
 
-interface RateLimitRecord {
-  count: number;
-  resetAt: number;
-}
-const rateLimitMap = new Map<string, RateLimitRecord>();
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const MAX_REQUESTS_PER_WINDOW = 30;
+const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: { persistSession: false },
+});
 
-function checkRateLimit(key: string): boolean {
-  const now = Date.now();
-  if (rateLimitMap.size > 5000) {
-    for (const [k, v] of rateLimitMap.entries()) {
-      if (v.resetAt < now) rateLimitMap.delete(k);
-    }
-  }
-
-  const record = rateLimitMap.get(key);
-  if (!record || record.resetAt < now) {
-    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-
-  if (record.count >= MAX_REQUESTS_PER_WINDOW) {
-    return false;
-  }
-
-  record.count += 1;
-  return true;
-}
-
-const SPAM_CLICK_WINDOW_MS = 10 * 1000;
-const lastClickTimestampMap = new Map<string, number>();
-
-function checkSpamSuspect(ip: string): boolean {
-  const now = Date.now();
-  const lastTs = lastClickTimestampMap.get(ip);
-  lastClickTimestampMap.set(ip, now);
-
-  if (lastClickTimestampMap.size > 5000) {
-    const cutoff = now - SPAM_CLICK_WINDOW_MS * 10;
-    for (const [k, v] of lastClickTimestampMap.entries()) {
-      if (v < cutoff) lastClickTimestampMap.delete(k);
-    }
-  }
-
-  if (lastTs !== undefined && now - lastTs < SPAM_CLICK_WINDOW_MS) {
-    return true;
-  }
-  return false;
-}
-
-function sendJsonResponse(res: ServerResponse, statusCode: number, data: unknown) {
-  if (typeof (res as any).status === 'function' && typeof (res as any).json === 'function') {
-    return (res as any).status(statusCode).json(data);
-  }
-  res.statusCode = statusCode;
-  res.setHeader('Content-Type', 'application/json');
-  res.end(JSON.stringify(data));
-}
-
-export default async function handler(
-  req: RequestWithBody,
-  res: ServerResponse
-) {
+export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, Apikey');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
-    res.statusCode = 200;
-    return res.end();
+    return res.status(200).end();
   }
 
   if (req.method !== 'POST') {
-    return sendJsonResponse(res, 405, { error: 'Method not allowed' });
+    return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
   try {
-    let body: Record<string, unknown> = {};
-    if (typeof req.body === 'string') {
-      try { body = JSON.parse(req.body); } catch (_) {}
-    } else if (req.body && typeof req.body === 'object') {
-      body = req.body as Record<string, unknown>;
-    }
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
 
     const {
-      event,
       tracking_key,
+      event,
+      page_url,
+      referrer,
       session_id,
-      fingerprint,
-      is_bot: clientIsBot,
-      bot_reasons,
-      ...params
+      device,
+      browser,
+      gclid,
+      utm_source,
+      utm_medium,
+      utm_campaign,
+      utm_content,
+      utm_term,
+      keyword,
+      user_agent,
+      element_text,
+      element_href
     } = body;
 
-    if (!tracking_key || !event) {
-      return sendJsonResponse(res, 400, { error: 'Missing tracking_key or event' });
+    if (!tracking_key) {
+      return res.status(400).json({ success: false, error: 'Missing tracking_key' });
     }
 
-    if ((event !== 'page_view' && event !== 'impression') && event !== 'click') {
-      return sendJsonResponse(res, 400, { error: 'Invalid event type' });
-    }
-
-    const supabaseUrl =
-      process.env.VITE_SUPABASE_URL ||
-      process.env.SUPABASE_URL ||
-      'https://qtgbuacxiuntczeaqlqi.supabase.co';
-
-    const serviceKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.VITE_SUPABASE_ANON_KEY ||
-      process.env.SUPABASE_ANON_KEY ||
-      '';
-
-    const supabase = createClient(supabaseUrl, serviceKey, {
-      auth: { persistSession: false },
-    });
-
-    let website = null as null | {
-      id: string;
-      user_id: string;
-      apps_script_url: string | null;
-      forwarding_active: boolean;
-      tracking_key: string;
-      profile_id?: string;
-    };
-
-    const { data: websiteRow, error: websiteError } = await supabase
-      .from('websites')
-      .select('id, user_id, apps_script_url, forwarding_active, tracking_key')
-      .eq('tracking_key', tracking_key)
-      .maybeSingle();
-
-    if (!websiteError && websiteRow) {
-      website = websiteRow;
-    }
-
-    if (!website) {
-      const { data: legacyProfile, error: legacyError } = await supabase
-        .from('profiles')
-        .select('id, user_id, apps_script_url, forwarding_active, tracking_key')
-        .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
-        .maybeSingle();
-
-      if (!legacyError && legacyProfile) {
-        website = {
-          id: legacyProfile.id,
-          user_id: legacyProfile.user_id || legacyProfile.id,
-          apps_script_url: legacyProfile.apps_script_url,
-          forwarding_active: legacyProfile.forwarding_active ?? true,
-          tracking_key: legacyProfile.tracking_key,
-          profile_id: legacyProfile.id
-        };
-      }
-    }
-
-    if (!website) {
-      return sendJsonResponse(res, 404, { error: 'Invalid tracking key' });
-    }
-
-    // Ambil profile_id jika belum ada (untuk foreign key clicks/impressions)
-    if (!website.profile_id) {
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('user_id', website.user_id)
-        .maybeSingle();
-      if (prof) website.profile_id = prof.id;
-    }
-
-    const userAgentParam = typeof params.user_agent === 'string' ? params.user_agent : '';
-    const userAgent = (req.headers['user-agent'] as string) || userAgentParam;
-    const isMobile = /Mobile|Android|iPhone|iPod/i.test(userAgent);
-    const isTablet = /iPad|Tablet/i.test(userAgent);
-    const uaDevice = isTablet ? 'Tablet' : isMobile ? 'Mobile' : 'Desktop';
-    let uaBrowser = 'Unknown';
-    if (/Edg\//i.test(userAgent)) uaBrowser = 'Edge';
-    else if (/OPR\//i.test(userAgent)) uaBrowser = 'Opera';
-    else if (/Chrome\//i.test(userAgent)) uaBrowser = 'Chrome';
-    else if (/Firefox\//i.test(userAgent)) uaBrowser = 'Firefox';
-    else if (/Safari\//i.test(userAgent)) uaBrowser = 'Safari';
-
-    const paramCountry = typeof params.country === 'string' ? params.country : undefined;
-    const paramCity = typeof params.city === 'string' ? params.city : undefined;
-    const country =
-      (req.headers['cf-ipcountry'] as string) ||
-      (req.headers['x-country-code'] as string) ||
-      (req.headers['x-vercel-ip-country'] as string) ||
-      paramCountry ||
-      'Unknown';
-    const city =
-      (req.headers['cf-ipcity'] as string) ||
-      (req.headers['x-vercel-ip-city'] as string) ||
-      paramCity ||
-      'Unknown';
-    const ip =
-      ((req.headers['x-forwarded-for'] as string) || '').split(',')[0]?.trim() ||
-      (req.socket?.remoteAddress || '127.0.0.1');
-    const paramLandingPage = typeof params.landing_page === 'string' ? params.landing_page : (typeof params.landingPage === 'string' ? params.landingPage : undefined);
-    const landingPage =
-      paramLandingPage ||
-      (req.headers.referer ?? '');
-    const referrer = typeof params.referrer === 'string' ? params.referrer : '';
-
-    let isBot = Boolean(clientIsBot);
-    const detectionReasons: string[] = Array.isArray(bot_reasons)
-      ? bot_reasons.map((r) => String(r))
-      : [];
-
-    if (BOT_UA_REGEX.test(userAgent)) {
-      isBot = true;
-      detectionReasons.push('server_ua_crawler');
-    }
-
-    const rateLimitKey = `${ip}_${session_id || fingerprint || 'anon'}`;
-    if (!checkRateLimit(rateLimitKey)) {
-      isBot = true;
-      detectionReasons.push('rate_limit_exceeded');
-    }
-
-    let isDuplicateGclid = false;
-    const gclid = params.gclid ? String(params.gclid).trim() : null;
-
-    if (event === 'click' && gclid) {
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: existingClick } = await supabase
-        .from('clicks')
-        .select('id')
-        .eq('website_id', website.id)
-        .eq('gclid', gclid)
-        .gte('created_at', oneDayAgo)
-        .limit(1)
-        .maybeSingle();
-
-      if (existingClick) {
-        isDuplicateGclid = true;
-        detectionReasons.push('duplicate_gclid');
-      }
-    }
-
-    let isSpamSuspect = false;
-    if (event === 'click' && !isBot) {
-      isSpamSuspect = checkSpamSuspect(ip);
-      if (isSpamSuspect) {
-        detectionReasons.push('rapid_click_spam');
-      }
-    }
-
-    const eventStatus = isBot || isDuplicateGclid
-      ? 'BOT_FILTERED'
-      : isSpamSuspect
-        ? 'SPAM_SUSPECT'
-        : 'OK';
-
-    const device = typeof params.device === 'string' ? params.device : uaDevice;
-    const utmSource = typeof params.utm_source === 'string' ? params.utm_source : null;
-    const utmMedium = typeof params.utm_medium === 'string' ? params.utm_medium : null;
-    const utmCampaign = typeof params.utm_campaign === 'string' ? params.utm_campaign : null;
-    const keyword = typeof params.keyword === 'string' ? params.keyword : null;
-    const sessionId = typeof session_id === 'string' ? session_id : null;
-    const clientFingerprint = typeof fingerprint === 'string' ? fingerprint : null;
-
-    // --- INSERT KE SUPABASE SESUAI SKEMA DIBAGIKAN ---
-    if (event === 'page_view' || event === 'impression') {
-      // 1. Coba simpan ke tabel page_views
-      const pageViewPayload = {
-        website_id: website.id,
-        user_id: website.user_id,
-        tracking_key,
-        session_id: sessionId,
-        fingerprint: clientFingerprint,
-        landing_page: landingPage,
-        page_url: typeof params.page_url === 'string' ? params.page_url : landingPage,
-        referrer,
-        country,
-        city,
-        ip_address: ip,
-        device,
-        os: typeof params.os === 'string' ? params.os : null,
-        browser: uaBrowser,
-        user_agent: userAgent,
-        is_bot: isBot,
-        bot_reasons: detectionReasons.join(',') || null,
-        status: eventStatus,
-      };
-
-      const { error: pageViewErr } = await supabase.from('page_views').insert(pageViewPayload);
-      
-      // Fallback ke tabel impressions jika page_views gagal
-      if (pageViewErr) {
-        console.error('page_views error, fallback to impressions:', pageViewErr.message);
-        await supabase.from('impressions').insert({
-          website_id: website.id,
-          user_id: website.profile_id || null,
+    const { data, error } = await supabase
+      .from('clicks')
+      .insert([
+        {
           tracking_key,
-          landing_page: landingPage,
-          referrer,
-          country,
-          city,
-          device,
-          browser: uaBrowser,
-          ip_address: ip,
-          is_spam: isBot || isSpamSuspect,
-          status: eventStatus,
-        }).catch(() => {});
-      }
-    } else {
-      // 2. Simpan ke tabel clicks (kolom disesuaikan dengan skema tabel clicks!)
-      const clickPayload = {
-        website_id: website.id,
-        user_id: website.profile_id || null,
-        tracking_key,
-        gclid,
-        utm_source: utmSource,
-        utm_medium: utmMedium,
-        utm_campaign: utmCampaign,
-        keyword,
-        device,
-        ip_address: ip,
-        country,
-        city,
-        landing_page: landingPage,
-        is_spam: isBot || isSpamSuspect,
-        status: eventStatus,
-      };
+          event_type: event || 'page_view',
+          page_url: page_url || '',
+          referrer: referrer || null,
+          session_id: session_id || null,
+          device: device || 'Desktop',
+          browser: browser || 'Unknown',
+          gclid: gclid || null,
+          utm_source: utm_source || null,
+          utm_medium: utm_medium || null,
+          utm_campaign: utm_campaign || null,
+          utm_content: utm_content || null,
+          utm_term: utm_term || null,
+          keyword: keyword || null,
+          user_agent: user_agent || (req.headers['user-agent'] as string) || null,
+          element_text: element_text || null,
+          element_href: element_href || null,
+          created_at: new Date().toISOString()
+        }
+      ]);
 
-      const { error: clickErr } = await supabase.from('clicks').insert(clickPayload);
-      if (clickErr) {
-        console.error('Supabase clicks insert error:', clickErr.message);
-      }
+    if (error) {
+      console.error('Supabase Insert Error:', error.message);
+      return res.status(500).json({ success: false, error: error.message });
     }
 
-    // Forwarding ke Google Apps Script
-    const shouldForward =
-      website.forwarding_active !== false &&
-      Boolean(website.apps_script_url) &&
-      eventStatus !== 'BOT_FILTERED';
-
-    if (shouldForward && website.apps_script_url) {
-      const forwardPayload = {
-        event: event === 'page_view' ? 'page_view' : 'click',
-        tracking_key,
-        website_id: website.id,
-        user_id: website.user_id,
-        ip_address: ip,
-        country,
-        city,
-        device,
-        os: typeof params.os === 'string' ? params.os : null,
-        browser: uaBrowser,
-        landing_page: landingPage,
-        page_url: typeof params.page_url === 'string' ? params.page_url : landingPage,
-        referrer,
-        gclid,
-        utm_source: utmSource,
-        utm_medium: utmMedium,
-        utm_campaign: utmCampaign,
-        keyword,
-        timestamp: new Date().toISOString(),
-        session_id: sessionId,
-        fingerprint: clientFingerprint,
-        status: eventStatus,
-        spam_suspect: isSpamSuspect,
-        detection_reasons: detectionReasons.join(',') || null,
-      };
-
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      fetch(website.apps_script_url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(forwardPayload),
-        redirect: 'follow',
-        signal: controller.signal,
-      })
-        .then(() => clearTimeout(timeout))
-        .catch(() => {});
-    }
-
-    return sendJsonResponse(res, 200, {
-      success: true,
-      event,
-      status: eventStatus,
-      spam_suspect: isSpamSuspect,
-      filtered_bot: isBot || isDuplicateGclid,
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal server error';
-    console.error('Tracking Handler Error:', message);
-    return sendJsonResponse(res, 500, { error: message });
+    return res.status(200).json({ success: true, data });
+  } catch (err: any) {
+    console.error('API Route Crash:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Internal Error' });
   }
 }
