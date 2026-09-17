@@ -27,7 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const fallbackProfile: Profile = {
       id: uid,
       user_id: uid,
-      display_name: (currentUser || user)?.email?.split('@')[0] || 'VRN User',
+      display_name: currentUser?.email?.split('@')[0] || 'VRN User',
       apps_script_url: null,
       tracking_key: uid,
       forwarding_active: true,
@@ -48,7 +48,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (!data) {
-        // Attempt to create or update profile row with upsert using onConflict: 'id'
         const { data: created, error: upsertError } = await supabase
           .from('profiles')
           .upsert(
@@ -66,7 +65,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (upsertError) {
           console.warn('Profile upsert notice:', upsertError.message);
-          // Fallback refetch in case row already exists
           const { data: refetched } = await supabase
             .from('profiles')
             .select('*')
@@ -82,33 +80,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setProfile(fallbackProfile);
     }
-  }, [user]);
+  }, []);
 
   const refreshProfile = useCallback(async () => {
     if (user) await loadProfile(user.id, user);
   }, [user, loadProfile]);
 
   useEffect(() => {
+    let isMounted = true;
+
     supabase.auth
       .getSession()
       .then(({ data }) => {
+        if (!isMounted) return;
         setSession(data.session);
         const currentUser = data.session?.user ?? null;
         setUser(currentUser);
         if (currentUser) {
-          loadProfile(currentUser.id, currentUser).finally(() => setLoading(false));
+          loadProfile(currentUser.id, currentUser).finally(() => {
+            if (isMounted) setLoading(false);
+          });
         } else {
           setLoading(false);
         }
       })
       .catch(() => {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       });
 
-    // Safety timeout so UI never stays stuck on loading
-    const timeout = setTimeout(() => setLoading(false), 4000);
+    const timeout = setTimeout(() => {
+      if (isMounted) setLoading(false);
+    }, 4000);
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (!isMounted) return;
       setSession(newSession);
       const currentUser = newSession?.user ?? null;
       setUser(currentUser);
@@ -121,6 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => {
+      isMounted = false;
       clearTimeout(timeout);
       listener.subscription.unsubscribe();
     };
@@ -131,24 +137,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
-        if (
-          error.message.toLowerCase().includes('email not confirmed') ||
-          error.message.toLowerCase().includes('invalid login credentials')
-        ) {
+        const message = error.message.toLowerCase();
+        const isRecoverable =
+          message.includes('email not confirmed') ||
+          message.includes('invalid login credentials');
+
+        if (isRecoverable) {
           try {
             const res = await fetch('/api/auth/register', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ email, password }),
             });
+
             if (res.ok) {
               const retry = await supabase.auth.signInWithPassword({ email, password });
               if (!retry.error) return { error: null };
             }
           } catch {
-            // Ignore backend auto-confirm failure and return original error
+            // fall through to the original Supabase error below
           }
         }
+
         return { error: error.message };
       }
 
