@@ -1,6 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Pastikan mengambil URL & Key dari Env Vercel
 const supabaseUrl =
   process.env.SUPABASE_URL ||
   process.env.VITE_SUPABASE_URL ||
@@ -18,12 +17,10 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
 });
 
 export default async function handler(req: any, res: any) {
-  // Wajib set header CORS di awal
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  // Handle preflight request
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -33,9 +30,17 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    let body = req.body;
-    if (typeof body === 'string') {
-      try { body = JSON.parse(body); } catch (_) {}
+    let body: any = {};
+
+    // Parsing aman baik string JSON maupun Object
+    if (typeof req.body === 'string') {
+      try {
+        body = JSON.parse(req.body);
+      } catch (e) {
+        body = {};
+      }
+    } else if (req.body && typeof req.body === 'object') {
+      body = req.body;
     }
 
     const {
@@ -55,15 +60,12 @@ export default async function handler(req: any, res: any) {
       user_agent,
       element_text,
       element_href
-    } = body || {};
-
-    console.log('Payload Masuk:', { tracking_key, event, page_url });
+    } = body;
 
     if (!tracking_key) {
       return res.status(400).json({ success: false, error: 'Missing tracking_key' });
     }
 
-    // 2. Wajib AWAIT saat Insert ke Supabase
     const { data, error } = await supabase
       .from('clicks')
       .insert([
@@ -90,14 +92,13 @@ export default async function handler(req: any, res: any) {
       ]);
 
     if (error) {
-      console.error('ERROR SUPABASE INSERT:', error);
+      console.error('Supabase Error:', error.message);
       return res.status(500).json({ success: false, error: error.message });
     }
 
-    console.log('SUCCESS INSERT SUPABASE:', data);
     return res.status(200).json({ success: true, data });
   } catch (err: any) {
-    console.error('CRASH API ROUTE:', err);
-    return res.status(500).json({ success: false, error: err.message || 'Internal Error' });
+    console.error('Crash Detail:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Server Error' });
   }
 }
