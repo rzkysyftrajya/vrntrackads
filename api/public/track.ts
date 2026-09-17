@@ -31,14 +31,8 @@ export default async function handler(req: any, res: any) {
 
   try {
     let body: any = {};
-
-    // Parsing aman baik string JSON maupun Object
     if (typeof req.body === 'string') {
-      try {
-        body = JSON.parse(req.body);
-      } catch (e) {
-        body = {};
-      }
+      try { body = JSON.parse(req.body); } catch (e) {}
     } else if (req.body && typeof req.body === 'object') {
       body = req.body;
     }
@@ -54,51 +48,71 @@ export default async function handler(req: any, res: any) {
       utm_source,
       utm_medium,
       utm_campaign,
-      utm_content,
-      utm_term,
       keyword,
-      user_agent,
-      element_text,
-      element_href
+      user_agent
     } = body;
 
     if (!tracking_key) {
       return res.status(400).json({ success: false, error: 'Missing tracking_key' });
     }
 
-    const { data, error } = await supabase
-      .from('clicks')
-      .insert([
-        {
-          tracking_key,
-          event_type: event || 'page_view',
-          page_url: page_url || landing_page || '',
-          referrer: referrer || null,
-          session_id: session_id || null,
-          device: 'Desktop',
-          browser: 'Unknown',
-          gclid: gclid || null,
-          utm_source: utm_source || null,
-          utm_medium: utm_medium || null,
-          utm_campaign: utm_campaign || null,
-          utm_content: utm_content || null,
-          utm_term: utm_term || null,
-          keyword: keyword || null,
-          user_agent: user_agent || (req.headers['user-agent'] as string) || null,
-          element_text: element_text || null,
-          element_href: element_href || null,
-          created_at: new Date().toISOString()
-        }
-      ]);
+    // 1. Ambil data website/profile dari Supabase berdasarkan tracking_key
+    const { data: website } = await supabase
+      .from('websites')
+      .select('id, user_id')
+      .eq('tracking_key', tracking_key)
+      .maybeSingle();
 
-    if (error) {
-      console.error('Supabase Error:', error.message);
-      return res.status(500).json({ success: false, error: error.message });
+    const websiteId = website?.id || null;
+    const userId = website?.user_id || null;
+
+    // 2. Tembak ke tabel clicks / page_views (Gunakan payload netral)
+    const insertPayload = {
+      tracking_key: tracking_key,
+      website_id: websiteId,
+      user_id: userId,
+      landing_page: page_url || landing_page || '',
+      page_url: page_url || landing_page || '',
+      referrer: referrer || null,
+      session_id: session_id || null,
+      gclid: gclid || null,
+      utm_source: utm_source || null,
+      utm_medium: utm_medium || null,
+      utm_campaign: utm_campaign || null,
+      keyword: keyword || null,
+      user_agent: user_agent || req.headers['user-agent'] || null,
+      status: 'OK',
+      created_at: new Date().toISOString()
+    };
+
+    // Coba insert ke tabel page_views terlebih dahulu
+    let insertResult = await supabase.from('page_views').insert([insertPayload]);
+
+    // Jika tabel page_views tidak ada / error, fallback insert ke tabel clicks
+    if (insertResult.error) {
+      console.warn('Fallback ke tabel clicks karena page_views error:', insertResult.error.message);
+      insertResult = await supabase.from('clicks').insert([{
+        tracking_key: tracking_key,
+        landing_page: page_url || landing_page || '',
+        gclid: gclid || null,
+        utm_source: utm_source || null,
+        utm_medium: utm_medium || null,
+        utm_campaign: utm_campaign || null,
+        keyword: keyword || null,
+        status: 'OK'
+      }]);
     }
 
-    return res.status(200).json({ success: true, data });
+    if (insertResult.error) {
+      console.error('DALAM SUPABASE ERROR:', insertResult.error);
+      return res.status(500).json({ success: false, supabase_error: insertResult.error.message });
+    }
+
+    console.log('BERHASIL MASUK SUPABASE!');
+    return res.status(200).json({ success: true, message: 'Data logged successfully' });
+
   } catch (err: any) {
-    console.error('Crash Detail:', err);
-    return res.status(500).json({ success: false, error: err.message || 'Server Error' });
+    console.error('CRASH API:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 }
