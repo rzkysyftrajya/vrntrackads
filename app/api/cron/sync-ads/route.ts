@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 // Sesuaikan kedalaman folder sesuai lokasi file route.ts berada
-import { fetchGoogleAdsMetrics, type GoogleAdsCampaignMetric } from '../../lib/googleAds.js';
+import { fetchGoogleAdsMetrics, type GoogleAdsCampaignMetric } from 
+'../../lib/googleAds.js';
 
 export const dynamic = 'force-dynamic';
 
