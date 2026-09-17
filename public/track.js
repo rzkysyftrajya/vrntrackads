@@ -13,7 +13,7 @@
     localStorage.setItem('vrn_session_id', sessionId);
   }
 
-  var ENDPOINT = '/api/public/track';
+ var ENDPOINT = 'https://vrnadvertiser.vercel.app/api/public/track';
 
   function sendEvent(eventType, extraData) {
     var payload = Object.assign({
