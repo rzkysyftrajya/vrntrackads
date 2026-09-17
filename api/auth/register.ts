@@ -54,33 +54,7 @@ export default async function handler(req: any, res: any) {
         createError.message?.toLowerCase().includes('already') ||
         createError.message?.toLowerCase().includes('exists')
       ) {
-        // Find the user id
-        const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
-        const existing = listData?.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase());
-
-        if (existing) {
-          await supabaseAdmin.auth.admin.updateUserById(existing.id, {
-            email_confirm: true,
-            password: password,
-          });
-
-          // Ensure profile exists using upsert
-          const { error: profError } = await supabaseAdmin.from('profiles').upsert(
-            {
-              id: existing.id,
-              user_id: existing.id,
-              display_name: email.split('@')[0],
-              tracking_key: existing.id,
-            },
-            { onConflict: 'id' }
-          );
-
-          if (profError) {
-            console.warn('Profile upsert notice for existing user:', profError.message);
-          }
-
-          return res.status(200).json({ success: true, message: 'User updated and confirmed' });
-        }
+        return res.status(409).json({ error: 'An account with this email already exists' });
       }
 
       return res.status(400).json({ error: createError.message });
@@ -108,4 +82,3 @@ export default async function handler(req: any, res: any) {
     return res.status(500).json({ error: err?.message || 'Registration error' });
   }
 }
-

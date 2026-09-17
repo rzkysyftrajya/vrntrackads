@@ -89,8 +89,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout>;
-
     supabase.auth
       .getSession()
       .then(({ data }) => {
@@ -108,7 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
     // Safety timeout so UI never stays stuck on loading
-    timeout = setTimeout(() => setLoading(false), 4000);
+    const timeout = setTimeout(() => setLoading(false), 4000);
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession);
@@ -130,27 +128,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signIn(email: string, password: string) {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
-        if (
-          error.message.toLowerCase().includes('email not confirmed') ||
-          error.message.toLowerCase().includes('invalid login credentials')
-        ) {
-          try {
-            const res = await fetch('/api/auth/register', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email, password }),
-            });
-            if (res.ok) {
-              const retry = await supabase.auth.signInWithPassword({ email, password });
-              if (!retry.error) return { error: null };
-            }
-          } catch {
-            // Ignore backend auto-confirm failure and return original error
-          }
-        }
         return { error: error.message };
       }
 
@@ -175,6 +155,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!loginRes.error) {
             return { error: null };
           }
+        } else if (res.status !== 409) {
+          const response = await res.json().catch(() => ({}));
+          return { error: response.error || 'Registration failed' };
         }
       } catch {
         // Fallback to direct Supabase Auth
@@ -213,6 +196,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function quickDemoLogin() {
     const demoEmail = 'demo@vrntrackads.com';
     const demoPassword = 'demo-password-2026';
+    const existingLogin = await signIn(demoEmail, demoPassword);
+    if (!existingLogin.error) return existingLogin;
     return await signUp(demoEmail, demoPassword);
   }
 
