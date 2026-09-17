@@ -1,6 +1,19 @@
+import type { IncomingMessage, ServerResponse } from 'http';
 import { createClient } from '@supabase/supabase-js';
 
-export default async function handler(req: any, res: any) {
+interface RequestWithBody extends IncomingMessage {
+  body?: unknown;
+}
+
+interface JsonServerResponse extends ServerResponse {
+  json: (data: unknown) => JsonServerResponse;
+  status: (statusCode: number) => JsonServerResponse;
+}
+
+export default async function handler(
+  req: RequestWithBody,
+  res: JsonServerResponse
+) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -15,8 +28,9 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    const { email, password } = body || {};
+    const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as Record<string, string> | undefined;
+    const email = body?.email;
+    const password = body?.password;
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
@@ -104,8 +118,9 @@ export default async function handler(req: any, res: any) {
     }
 
     return res.status(200).json({ success: true, user: createdUser?.user });
-  } catch (err: any) {
-    return res.status(500).json({ error: err?.message || 'Registration error' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Registration error';
+    return res.status(500).json({ error: message });
   }
 }
 

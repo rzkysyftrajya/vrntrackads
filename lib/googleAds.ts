@@ -14,6 +14,21 @@ export interface GoogleAdsCampaignMetric {
  * Fetches campaign performance metrics for the last 30 days from Google Ads API.
  * Converts cost_micros to standard currency units (divided by 1,000,000).
  */
+interface GoogleAdsRow {
+  campaign?: {
+    id?: string | number;
+    name?: string;
+  };
+  metrics?: {
+    impressions?: string | number;
+    clicks?: string | number;
+    cost_micros?: string | number;
+  };
+  segments?: {
+    date?: string;
+  };
+}
+
 export async function fetchGoogleAdsMetrics(): Promise<GoogleAdsCampaignMetric[]> {
   const clientId = process.env.GADS_CLIENT_ID;
   const clientSecret = process.env.GADS_CLIENT_SECRET;
@@ -56,9 +71,9 @@ export async function fetchGoogleAdsMetrics(): Promise<GoogleAdsCampaignMetric[]
     ORDER BY segments.date DESC
   `;
 
-  const rows = await customer.query(query);
+  const rows = (await customer.query(query)) as unknown as GoogleAdsRow[];
 
-  return rows.map((row: any) => {
+  return rows.map((row) => {
     const costMicros = Number(row.metrics?.cost_micros ?? 0);
 
     return {

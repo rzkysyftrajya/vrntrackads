@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Activity, Mail, Lock, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Mail, Lock, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
 
 export default function AuthPage() {
   const { signIn, signUp, quickDemoLogin } = useAuth();

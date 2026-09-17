@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import type { Profile } from '@/lib/types';
@@ -23,7 +23,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function loadProfile(uid: string, currentUser?: User | null) {
+  const loadProfile = useCallback(async (uid: string, currentUser?: User | null) => {
     const fallbackProfile: Profile = {
       id: uid,
       user_id: uid,
@@ -82,15 +82,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setProfile(fallbackProfile);
     }
-  }
+  }, [user]);
 
-  async function refreshProfile() {
+  const refreshProfile = useCallback(async () => {
     if (user) await loadProfile(user.id, user);
-  }
+  }, [user, loadProfile]);
 
   useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout>;
-
     supabase.auth
       .getSession()
       .then(({ data }) => {
@@ -108,7 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
     // Safety timeout so UI never stays stuck on loading
-    timeout = setTimeout(() => setLoading(false), 4000);
+    const timeout = setTimeout(() => setLoading(false), 4000);
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession);
@@ -126,11 +124,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearTimeout(timeout);
       listener.subscription.unsubscribe();
     };
-  }, []);
+  }, [loadProfile]);
 
   async function signIn(email: string, password: string) {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
         if (
@@ -155,8 +153,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       return { error: null };
-    } catch (err: any) {
-      return { error: err?.message || 'Login failed' };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Login failed';
+      return { error: message };
     }
   }
 
@@ -205,8 +204,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return {
         error: null,
       };
-    } catch (err: any) {
-      return { error: err?.message || 'Registration failed' };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Registration failed';
+      return { error: message };
     }
   }
 
@@ -240,6 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');

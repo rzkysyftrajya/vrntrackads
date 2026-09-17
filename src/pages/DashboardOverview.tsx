@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
-import type { TimelinePoint, LiveFeedItem, DateFilter } from '@/lib/types';
+import type { TimelinePoint, LiveFeedItem, DateFilter, Impression, Click } from '@/lib/types';
 import type { PageId } from '@/components/Layout';
 import {
   Eye,
@@ -27,101 +27,11 @@ import {
   ChevronDown,
 } from 'lucide-react';
 
-export type { DateFilter };
-
-export interface DateRangeBounds {
-  start: Date;
-  end: Date;
-  startIso: string;
-  endIso: string;
-}
-
-export function getDateRangeBounds(
-  filter: DateFilter,
-  customStart?: string,
-  customEnd?: string
-): DateRangeBounds {
-  const now = new Date();
-
-  if (filter === 'today') {
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    return {
-      start,
-      end,
-      startIso: start.toISOString(),
-      endIso: end.toISOString(),
-    };
-  }
-
-  if (filter === 'yesterday') {
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0, 0);
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
-    return {
-      start,
-      end,
-      startIso: start.toISOString(),
-      endIso: end.toISOString(),
-    };
-  }
-
-  if (filter === '7days') {
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0);
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    return {
-      start,
-      end,
-      startIso: start.toISOString(),
-      endIso: end.toISOString(),
-    };
-  }
-
-  // 'custom'
-  let start: Date;
-  let end: Date;
-
-  if (customStart) {
-    const [sY, sM, sD] = customStart.split('-').map(Number);
-    start = new Date(sY, (sM || 1) - 1, sD || 1, 0, 0, 0, 0);
-  } else {
-    start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0);
-  }
-
-  if (customEnd) {
-    const [eY, eM, eD] = customEnd.split('-').map(Number);
-    end = new Date(eY, (eM || 1) - 1, eD || 1, 23, 59, 59, 999);
-  } else {
-    end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  }
-
-  return {
-    start,
-    end,
-    startIso: start.toISOString(),
-    endIso: end.toISOString(),
-  };
-}
-
-export function formatDisplayDateRange(start: Date, end: Date, filter: DateFilter): string {
-  const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
-  if (filter === 'today') {
-    return `Hari ini (${start.toLocaleDateString('id-ID', options)})`;
-  }
-  if (filter === 'yesterday') {
-    return `Kemarin (${start.toLocaleDateString('id-ID', options)})`;
-  }
-  return `${start.toLocaleDateString('id-ID', options)} — ${end.toLocaleDateString('id-ID', options)}`;
-}
-
-export function formatTimelineLabel(dateStr: string): string {
-  if (dateStr.includes(':')) {
-    return dateStr;
-  }
-  if (dateStr.length >= 10) {
-    return dateStr.slice(5);
-  }
-  return dateStr;
-}
+import {
+  getDateRangeBounds,
+  formatDisplayDateRange,
+  formatTimelineLabel,
+} from '@/lib/dateUtils';
 
 interface DashboardStats {
   totalImpressions: number;
@@ -174,7 +84,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       const bounds = getDateRangeBounds(dateFilter, customStartDate, customEndDate);
 
       // 1. Fetch impressions from Supabase filtered by timestamp ('created_at') using .gte() and .lte() ISO date strings
-      let impQuery = supabase
+      const impQuery = supabase
         .from('impressions')
         .select('*')
         .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
@@ -184,7 +94,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         .limit(500);
 
       // 2. Fetch clicks from Supabase filtered by timestamp ('created_at') using .gte() and .lte() ISO date strings
-      let clkQuery = supabase
+      const clkQuery = supabase
         .from('clicks')
         .select('*')
         .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
@@ -197,7 +107,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         await Promise.all([impQuery, clkQuery]);
 
       // Fallback: in case Supabase schema uses 'timestamp' column name instead of 'created_at'
-      if (impErr && (impErr.message?.includes('created_at') || (impErr as any).code === '42703')) {
+      if (impErr && (impErr.message?.includes('created_at') || (impErr as { code?: string }).code === '42703')) {
         const fallbackImp = await supabase
           .from('impressions')
           .select('*')
@@ -210,7 +120,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         impErr = fallbackImp.error;
       }
 
-      if (clkErr && (clkErr.message?.includes('created_at') || (clkErr as any).code === '42703')) {
+      if (clkErr && (clkErr.message?.includes('created_at') || (clkErr as { code?: string }).code === '42703')) {
         const fallbackClk = await supabase
           .from('clicks')
           .select('*')
@@ -226,8 +136,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       if (impErr) console.warn('Impressions fetch error:', impErr.message);
       if (clkErr) console.warn('Clicks fetch error:', clkErr.message);
 
-      const impList = impressions || [];
-      const clkList = clicks || [];
+      const impList = (impressions || []) as (Impression & { timestamp?: string })[];
+      const clkList = (clicks || []) as (Click & { timestamp?: string })[];
       const impCount = impList.length;
       const clkCount = clkList.length;
 
@@ -253,7 +163,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           days[slot] = { impressions: 0, clicks: 0 };
         }
 
-        impList.forEach((r: any) => {
+        impList.forEach((r) => {
           const rawDate = r.created_at || r.timestamp;
           if (rawDate) {
             const d = new Date(rawDate);
@@ -265,7 +175,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           }
         });
 
-        clkList.forEach((r: any) => {
+        clkList.forEach((r) => {
           const rawDate = r.created_at || r.timestamp;
           if (rawDate) {
             const d = new Date(rawDate);
@@ -292,13 +202,13 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           count++;
         }
 
-        impList.forEach((r: any) => {
+        impList.forEach((r) => {
           const rawDate = r.created_at || r.timestamp || '';
           const key = rawDate.slice(0, 10);
           if (days[key]) days[key].impressions++;
         });
 
-        clkList.forEach((r: any) => {
+        clkList.forEach((r) => {
           const rawDate = r.created_at || r.timestamp || '';
           const key = rawDate.slice(0, 10);
           if (days[key]) days[key].clicks++;
@@ -318,7 +228,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
 
       // Combine feed items
       const combinedFeed: LiveFeedItem[] = [
-        ...impList.map((r: any) => ({
+        ...impList.map((r) => ({
           id: r.id,
           type: 'impression' as const,
           country: r.country || 'Indonesia',
@@ -330,7 +240,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           created_at: r.created_at || r.timestamp || new Date().toISOString(),
           forwarding_status: isForwarding ? 'Sent to Apps Script' : 'Disabled',
         })),
-        ...clkList.map((r: any) => ({
+        ...clkList.map((r) => ({
           id: r.id,
           type: 'click' as const,
           country: r.country || 'Indonesia',
@@ -355,7 +265,6 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
     }
   }, [
     profile?.user_id,
-    profile?.tracking_key,
     profile?.apps_script_url,
     profile?.forwarding_active,
     trackingKey,
@@ -378,18 +287,18 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'impressions' },
         (payload) => {
-          const r = payload.new as Record<string, any>;
+          const r = payload.new as Record<string, unknown>;
           if (r.tracking_key === trackingKey || r.user_id === profile?.user_id) {
             const item: LiveFeedItem = {
-              id: r.id,
+              id: String(r.id || ''),
               type: 'impression',
-              country: r.country || 'Indonesia',
-              city: r.city || 'Jakarta',
-              device: r.device || 'Mobile',
-              browser: r.browser || 'Chrome',
-              ip_address: r.ip_address || '180.252.10.4',
-              landing_page: r.landing_page || '/',
-              created_at: r.created_at || r.timestamp || new Date().toISOString(),
+              country: String(r.country || 'Indonesia'),
+              city: String(r.city || 'Jakarta'),
+              device: String(r.device || 'Mobile'),
+              browser: String(r.browser || 'Chrome'),
+              ip_address: String(r.ip_address || '180.252.10.4'),
+              landing_page: String(r.landing_page || '/'),
+              created_at: String(r.created_at || r.timestamp || new Date().toISOString()),
               forwarding_status: profile?.apps_script_url && profile?.forwarding_active ? 'Sent to Apps Script' : 'Disabled',
             };
             setLiveFeed((prev) => [item, ...prev].slice(0, 50));
@@ -434,21 +343,21 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'clicks' },
         (payload) => {
-          const r = payload.new as Record<string, any>;
+          const r = payload.new as Record<string, unknown>;
           if (r.tracking_key === trackingKey || r.user_id === profile?.user_id) {
             const item: LiveFeedItem = {
-              id: r.id,
+              id: String(r.id || ''),
               type: 'click',
-              country: r.country || 'Indonesia',
-              city: r.city || 'Jakarta',
-              device: r.device || 'Mobile',
-              browser: r.browser || 'Chrome',
-              ip_address: r.ip_address || '180.252.10.4',
-              gclid: r.gclid,
-              utm_source: r.utm_source,
-              keyword: r.keyword,
-              landing_page: r.landing_page || '/',
-              created_at: r.created_at || r.timestamp || new Date().toISOString(),
+              country: String(r.country || 'Indonesia'),
+              city: String(r.city || 'Jakarta'),
+              device: String(r.device || 'Mobile'),
+              browser: String(r.browser || 'Chrome'),
+              ip_address: String(r.ip_address || '180.252.10.4'),
+              gclid: r.gclid ? String(r.gclid) : undefined,
+              utm_source: r.utm_source ? String(r.utm_source) : undefined,
+              keyword: r.keyword ? String(r.keyword) : undefined,
+              landing_page: String(r.landing_page || '/'),
+              created_at: String(r.created_at || r.timestamp || new Date().toISOString()),
               forwarding_status: profile?.apps_script_url && profile?.forwarding_active ? 'Sent to Apps Script' : 'Disabled',
             };
             setLiveFeed((prev) => [item, ...prev].slice(0, 50));

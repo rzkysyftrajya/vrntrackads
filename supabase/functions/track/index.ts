@@ -321,7 +321,8 @@ Deno.serve(async (req: Request) => {
       spam_suspect: isSpamSuspect,
       filtered_bot: isBot || isDuplicateGclid,
     });
-  } catch (err: any) {
-    return jsonResponse({ error: err.message }, 500);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Internal server error';
+    return jsonResponse({ error: message }, 500);
   }
 });

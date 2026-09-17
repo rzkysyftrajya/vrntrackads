@@ -134,10 +134,11 @@ function devApiPlugin(env: Record<string, string>): Plugin {
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ success: true, user: createdUser?.user }));
             return;
-          } catch (err: any) {
+          } catch (err: unknown) {
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: err?.message || 'Registration error' }));
+            const message = err instanceof Error ? err.message : 'Registration error';
+            res.end(JSON.stringify({ error: message }));
             return;
           }
         }
@@ -148,10 +149,11 @@ function devApiPlugin(env: Record<string, string>): Plugin {
             const { default: handler } = await import('./api/cron/sync-ads.ts');
             await handler(req, res);
             return;
-          } catch (err: any) {
+          } catch (err: unknown) {
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ success: false, error: err?.message || 'Sync cron error' }));
+            const message = err instanceof Error ? err.message : 'Sync cron error';
+            res.end(JSON.stringify({ success: false, error: message }));
             return;
           }
         }
@@ -314,10 +316,11 @@ function devApiPlugin(env: Record<string, string>): Plugin {
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ success: true, event }));
             return;
-          } catch (err: any) {
+          } catch (err: unknown) {
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: err?.message || 'Internal server error' }));
+            const message = err instanceof Error ? err.message : 'Internal server error';
+            res.end(JSON.stringify({ error: message }));
             return;
           }
         }

@@ -15,7 +15,6 @@ import {
   ChevronDown,
   ChevronUp,
   FileCode,
-  ShieldCheck,
   CheckCircle2,
   AlertCircle,
   HelpCircle,
@@ -125,8 +124,9 @@ function doPost(e) {
         }
         await refreshProfile();
       }
-    } catch (err: any) {
-      notify('Error: ' + (err?.message || 'Gagal menyimpan'), 'error');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Gagal menyimpan';
+      notify('Error: ' + message, 'error');
     } finally {
       setSaving(false);
     }
@@ -164,9 +164,10 @@ function doPost(e) {
         notify(`Forwarding ke Google Sheets ${newVal ? 'diaktifkan' : 'dinonaktifkan'}`, 'success');
         await refreshProfile();
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setForwardingActive(!newVal);
-      notify('Error: ' + (err?.message || 'Gagal mengubah status'), 'error');
+      const message = err instanceof Error ? err.message : 'Gagal mengubah status';
+      notify('Error: ' + message, 'error');
     }
   }
 
@@ -207,11 +208,11 @@ function doPost(e) {
             success = true;
             break;
           } else {
-            const data = await res.json().catch(() => ({}));
+            const data = (await res.json().catch(() => ({}))) as Record<string, string>;
             lastErrorMessage = data.error || `HTTP ${res.status}`;
           }
-        } catch (e: any) {
-          lastErrorMessage = e?.message || 'Network error';
+        } catch (e: unknown) {
+          lastErrorMessage = e instanceof Error ? e.message : 'Network error';
         }
       }
 

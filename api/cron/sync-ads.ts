@@ -1,7 +1,16 @@
+import type { IncomingMessage, ServerResponse } from 'http';
 import { createClient } from '@supabase/supabase-js';
 import { fetchGoogleAdsMetrics } from '../../lib/googleAds.js';
 
-export default async function handler(req: any, res: any) {
+interface JsonServerResponse extends ServerResponse {
+  json: (data: unknown) => JsonServerResponse;
+  status: (statusCode: number) => JsonServerResponse;
+}
+
+export default async function handler(
+  req: IncomingMessage,
+  res: JsonServerResponse
+) {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -97,11 +106,12 @@ export default async function handler(req: any, res: any) {
       synced_rows: recordsToUpsert.length,
       data: data || recordsToUpsert,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Google Ads Sync Cron Error:', error);
+    const message = error instanceof Error ? error.message : 'Internal server error while syncing Google Ads metrics';
     return res.status(500).json({
       success: false,
-      error: error.message || 'Internal server error while syncing Google Ads metrics',
+      error: message,
     });
   }
 }

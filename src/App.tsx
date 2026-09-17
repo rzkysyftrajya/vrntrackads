@@ -6,7 +6,6 @@ import Layout, { type PageId } from '@/components/Layout';
 import DashboardOverview from '@/pages/DashboardOverview';
 import SettingsPage from '@/pages/SettingsPage';
 import InstallationGuide from '@/pages/InstallationGuide';
-import { Activity } from 'lucide-react';
 
 function AppContent() {
   const { session, loading } = useAuth();

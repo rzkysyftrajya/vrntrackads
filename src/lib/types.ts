@@ -37,6 +37,7 @@ export interface Click {
   ip_address: string | null;
   country: string | null;
   city: string | null;
+  browser?: string | null;
   landing_page: string | null;
   created_at: string;
 }

@@ -1,4 +1,14 @@
+import type { IncomingMessage, ServerResponse } from 'http';
 import { createClient } from '@supabase/supabase-js';
+
+interface RequestWithBody extends IncomingMessage {
+  body?: unknown;
+}
+
+interface JsonServerResponse extends ServerResponse {
+  json: (data: unknown) => JsonServerResponse;
+  status: (statusCode: number) => JsonServerResponse;
+}
 
 const BOT_UA_REGEX = /bot|crawler|spider|headless|puppeteer|selenium|playwright|phantom|curl|wget|python|postman|node-fetch|axios|go-http-client|apachebench|ahrefs|semrush|petalbot|bytespider|yandex|facebookexternalhit|bingbot|googlebot|slurp|duckduckbot/i;
 
@@ -55,7 +65,10 @@ function checkSpamSuspect(ip: string): boolean {
 }
 
 
-export default async function handler(req: any, res: any) {
+export default async function handler(
+  req: RequestWithBody,
+  res: JsonServerResponse
+) {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -70,7 +83,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as Record<string, unknown> | undefined;
     const {
       event,
       tracking_key,
@@ -114,7 +127,8 @@ export default async function handler(req: any, res: any) {
       return res.status(404).json({ error: 'Invalid tracking key' });
     }
 
-    const userAgent = (req.headers['user-agent'] as string) || params.user_agent || '';
+    const userAgentParam = typeof params.user_agent === 'string' ? params.user_agent : '';
+    const userAgent = (req.headers['user-agent'] as string) || userAgentParam;
     const isMobile = /Mobile|Android|iPhone|iPod/i.test(userAgent);
     const isTablet = /iPad|Tablet/i.test(userAgent);
     const uaDevice = isTablet ? 'Tablet' : isMobile ? 'Mobile' : 'Desktop';
@@ -125,29 +139,33 @@ export default async function handler(req: any, res: any) {
     else if (/Firefox\//i.test(userAgent)) uaBrowser = 'Firefox';
     else if (/Safari\//i.test(userAgent)) uaBrowser = 'Safari';
 
+    const paramCountry = typeof params.country === 'string' ? params.country : undefined;
+    const paramCity = typeof params.city === 'string' ? params.city : undefined;
     const country =
       (req.headers['cf-ipcountry'] as string) ||
       (req.headers['x-country-code'] as string) ||
       (req.headers['x-vercel-ip-country'] as string) ||
-      params.country ||
+      paramCountry ||
       'Unknown';
     const city =
       (req.headers['cf-ipcity'] as string) ||
       (req.headers['x-vercel-ip-city'] as string) ||
-      params.city ||
+      paramCity ||
       'Unknown';
     const ip =
       ((req.headers['x-forwarded-for'] as string) || '').split(',')[0]?.trim() ||
       (req.socket?.remoteAddress || '127.0.0.1');
+    const paramLandingPage = typeof params.landing_page === 'string' ? params.landing_page : (typeof params.landingPage === 'string' ? params.landingPage : undefined);
     const landingPage =
-      params.landing_page ||
-      params.landingPage ||
+      paramLandingPage ||
       (req.headers.referer ?? '');
-    const referrer = params.referrer || '';
+    const referrer = typeof params.referrer === 'string' ? params.referrer : '';
 
     // Advanced Bot & Click Fraud Detection
     let isBot = Boolean(clientIsBot);
-    const detectionReasons: string[] = Array.isArray(bot_reasons) ? [...bot_reasons] : [];
+    const detectionReasons: string[] = Array.isArray(bot_reasons)
+      ? bot_reasons.map((r) => String(r))
+      : [];
 
     if (BOT_UA_REGEX.test(userAgent)) {
       isBot = true;
@@ -196,10 +214,20 @@ export default async function handler(req: any, res: any) {
         ? 'SPAM_SUSPECT'
         : 'OK';
 
+    const device = typeof params.device === 'string' ? params.device : uaDevice;
+    const utmSource = typeof params.utm_source === 'string' ? params.utm_source : null;
+    const utmMedium = typeof params.utm_medium === 'string' ? params.utm_medium : null;
+    const utmCampaign = typeof params.utm_campaign === 'string' ? params.utm_campaign : null;
+    const keyword = typeof params.keyword === 'string' ? params.keyword : null;
+    const clickTarget = typeof params.click_target === 'string' ? params.click_target : null;
+    const targetText = typeof params.target_text === 'string' ? params.target_text : null;
+    const sessionId = typeof session_id === 'string' ? session_id : null;
+    const clientFingerprint = typeof fingerprint === 'string' ? fingerprint : null;
+
     const commonFields = {
       user_id: profile.user_id,
       tracking_key,
-      device: params.device || uaDevice,
+      device,
       ip_address: ip,
       country,
       city,
@@ -219,10 +247,10 @@ export default async function handler(req: any, res: any) {
       const { error } = await supabase.from('clicks').insert({
         ...commonFields,
         gclid,
-        utm_source: params.utm_source || null,
-        utm_medium: params.utm_medium || null,
-        utm_campaign: params.utm_campaign || null,
-        keyword: params.keyword || null,
+        utm_source: utmSource,
+        utm_medium: utmMedium,
+        utm_campaign: utmCampaign,
+        keyword,
       });
       if (error) {
         return res.status(500).json({ error: 'Failed to save click', details: error.message });
@@ -245,20 +273,20 @@ export default async function handler(req: any, res: any) {
         ip_address: ip,
         country,
         city,
-        device: params.device || uaDevice,
+        device,
         browser: uaBrowser,
         landing_page: landingPage,
         referrer,
         gclid,
-        utm_source: params.utm_source || null,
-        utm_medium: params.utm_medium || null,
-        utm_campaign: params.utm_campaign || null,
-        keyword: params.keyword || null,
+        utm_source: utmSource,
+        utm_medium: utmMedium,
+        utm_campaign: utmCampaign,
+        keyword,
         timestamp: new Date().toISOString(),
-        session_id: session_id || null,
-        fingerprint: fingerprint || null,
-        click_target: params.click_target || null,
-        target_text: params.target_text || null,
+        session_id: sessionId,
+        fingerprint: clientFingerprint,
+        click_target: clickTarget,
+        target_text: targetText,
         // ── Status anti-spam ──────────────────────────────────────────────
         status: eventStatus,                          // "OK" | "SPAM_SUSPECT"
         spam_suspect: isSpamSuspect,                  // true → warna baris MERAH di Sheets
@@ -285,7 +313,8 @@ export default async function handler(req: any, res: any) {
       spam_suspect: isSpamSuspect,
       filtered_bot: isBot || isDuplicateGclid,
     });
-  } catch (err: any) {
-    return res.status(500).json({ error: err?.message || 'Internal server error' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Internal server error';
+    return res.status(500).json({ error: message });
   }
 }

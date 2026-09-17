@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Activity, LayoutDashboard, Settings, BookOpen, LogOut, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Settings, BookOpen, LogOut, Menu } from 'lucide-react';
 
 export type PageId = 'overview' | 'settings' | 'guide';
 
