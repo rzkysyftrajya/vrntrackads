@@ -58,7 +58,6 @@ function checkSpamSuspect(ip: string): boolean {
   return false;
 }
 
-// Helper aman untuk mengirimkan response JSON tanpa crash di Vercel
 function sendJsonResponse(res: ServerResponse, statusCode: number, data: unknown) {
   if (typeof (res as any).status === 'function' && typeof (res as any).json === 'function') {
     return (res as any).status(statusCode).json(data);
@@ -72,7 +71,6 @@ export default async function handler(
   req: RequestWithBody,
   res: ServerResponse
 ) {
-  // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, Apikey');
@@ -133,6 +131,7 @@ export default async function handler(
       apps_script_url: string | null;
       forwarding_active: boolean;
       tracking_key: string;
+      profile_id?: string;
     };
 
     const { data: websiteRow, error: websiteError } = await supabase
@@ -155,16 +154,27 @@ export default async function handler(
       if (!legacyError && legacyProfile) {
         website = {
           id: legacyProfile.id,
-          user_id: legacyProfile.user_id,
+          user_id: legacyProfile.user_id || legacyProfile.id,
           apps_script_url: legacyProfile.apps_script_url,
-          forwarding_active: legacyProfile.forwarding_active,
+          forwarding_active: legacyProfile.forwarding_active ?? true,
           tracking_key: legacyProfile.tracking_key,
+          profile_id: legacyProfile.id
         };
       }
     }
 
     if (!website) {
       return sendJsonResponse(res, 404, { error: 'Invalid tracking key' });
+    }
+
+    // Ambil profile_id jika belum ada (untuk foreign key clicks/impressions)
+    if (!website.profile_id) {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('user_id', website.user_id)
+        .maybeSingle();
+      if (prof) website.profile_id = prof.id;
     }
 
     const userAgentParam = typeof params.user_agent === 'string' ? params.user_agent : '';
@@ -259,47 +269,77 @@ export default async function handler(
     const sessionId = typeof session_id === 'string' ? session_id : null;
     const clientFingerprint = typeof fingerprint === 'string' ? fingerprint : null;
 
-    const commonFields = {
-      website_id: website.id,
-      user_id: website.user_id,
-      tracking_key,
-      session_id: sessionId,
-      fingerprint: clientFingerprint,
-      landing_page: landingPage,
-      page_url: typeof params.page_url === 'string' ? params.page_url : landingPage,
-      referrer,
-      country,
-      city,
-      ip_address: ip,
-      device,
-      os: typeof params.os === 'string' ? params.os : null,
-      browser: uaBrowser,
-      user_agent: userAgent,
-      is_bot: isBot,
-      bot_reasons: detectionReasons.join(',') || null,
-      status: eventStatus,
-    };
-
+    // --- INSERT KE SUPABASE SESUAI SKEMA DIBAGIKAN ---
     if (event === 'page_view' || event === 'impression') {
-      const { error: pageViewErr } = await supabase.from('page_views').insert(commonFields);
+      // 1. Coba simpan ke tabel page_views
+      const pageViewPayload = {
+        website_id: website.id,
+        user_id: website.user_id,
+        tracking_key,
+        session_id: sessionId,
+        fingerprint: clientFingerprint,
+        landing_page: landingPage,
+        page_url: typeof params.page_url === 'string' ? params.page_url : landingPage,
+        referrer,
+        country,
+        city,
+        ip_address: ip,
+        device,
+        os: typeof params.os === 'string' ? params.os : null,
+        browser: uaBrowser,
+        user_agent: userAgent,
+        is_bot: isBot,
+        bot_reasons: detectionReasons.join(',') || null,
+        status: eventStatus,
+      };
+
+      const { error: pageViewErr } = await supabase.from('page_views').insert(pageViewPayload);
+      
+      // Fallback ke tabel impressions jika page_views gagal
       if (pageViewErr) {
-        console.error('Supabase page_views insert error:', pageViewErr.message);
-        await supabase.from('impressions').insert(commonFields).catch(() => {});
+        console.error('page_views error, fallback to impressions:', pageViewErr.message);
+        await supabase.from('impressions').insert({
+          website_id: website.id,
+          user_id: website.profile_id || null,
+          tracking_key,
+          landing_page: landingPage,
+          referrer,
+          country,
+          city,
+          device,
+          browser: uaBrowser,
+          ip_address: ip,
+          is_spam: isBot || isSpamSuspect,
+          status: eventStatus,
+        }).catch(() => {});
       }
     } else {
-      const { error: clickErr } = await supabase.from('clicks').insert({
-        ...commonFields,
+      // 2. Simpan ke tabel clicks (kolom disesuaikan dengan skema tabel clicks!)
+      const clickPayload = {
+        website_id: website.id,
+        user_id: website.profile_id || null,
+        tracking_key,
         gclid,
         utm_source: utmSource,
         utm_medium: utmMedium,
         utm_campaign: utmCampaign,
         keyword,
-      });
+        device,
+        ip_address: ip,
+        country,
+        city,
+        landing_page: landingPage,
+        is_spam: isBot || isSpamSuspect,
+        status: eventStatus,
+      };
+
+      const { error: clickErr } = await supabase.from('clicks').insert(clickPayload);
       if (clickErr) {
         console.error('Supabase clicks insert error:', clickErr.message);
       }
     }
 
+    // Forwarding ke Google Apps Script
     const shouldForward =
       website.forwarding_active !== false &&
       Boolean(website.apps_script_url) &&
