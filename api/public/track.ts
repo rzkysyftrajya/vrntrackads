@@ -1,14 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 
+// Pastikan mengambil URL & Key dari Env Vercel
 const supabaseUrl =
   process.env.SUPABASE_URL ||
   process.env.VITE_SUPABASE_URL ||
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
-  '';
+  'https://qtgbuacxiuntczeaqlqi.supabase.co';
 
 const supabaseServiceKey =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   process.env.VITE_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
   '';
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey, {
@@ -16,6 +18,7 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
 });
 
 export default async function handler(req: any, res: any) {
+  // 1. Set Header CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -29,16 +32,18 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (_) {}
+    }
 
     const {
       tracking_key,
       event,
       page_url,
+      landing_page,
       referrer,
       session_id,
-      device,
-      browser,
       gclid,
       utm_source,
       utm_medium,
@@ -49,23 +54,26 @@ export default async function handler(req: any, res: any) {
       user_agent,
       element_text,
       element_href
-    } = body;
+    } = body || {};
+
+    console.log('Payload Masuk:', { tracking_key, event, page_url });
 
     if (!tracking_key) {
       return res.status(400).json({ success: false, error: 'Missing tracking_key' });
     }
 
+    // 2. Wajib AWAIT saat Insert ke Supabase
     const { data, error } = await supabase
       .from('clicks')
       .insert([
         {
           tracking_key,
           event_type: event || 'page_view',
-          page_url: page_url || '',
+          page_url: page_url || landing_page || '',
           referrer: referrer || null,
           session_id: session_id || null,
-          device: device || 'Desktop',
-          browser: browser || 'Unknown',
+          device: 'Desktop',
+          browser: 'Unknown',
           gclid: gclid || null,
           utm_source: utm_source || null,
           utm_medium: utm_medium || null,
@@ -81,13 +89,14 @@ export default async function handler(req: any, res: any) {
       ]);
 
     if (error) {
-      console.error('Supabase Insert Error:', error.message);
+      console.error('ERROR SUPABASE INSERT:', error);
       return res.status(500).json({ success: false, error: error.message });
     }
 
+    console.log('SUCCESS INSERT SUPABASE:', data);
     return res.status(200).json({ success: true, data });
   } catch (err: any) {
-    console.error('API Route Crash:', err);
+    console.error('CRASH API ROUTE:', err);
     return res.status(500).json({ success: false, error: err.message || 'Internal Error' });
   }
 }
