@@ -72,3 +72,4 @@ export async function fetchGoogleAdsMetrics(): Promise<GoogleAdsCampaignMetric[]
     };
   });
 }
+

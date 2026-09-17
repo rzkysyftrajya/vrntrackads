@@ -48,20 +48,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (!data) {
-        // Attempt to create profile row with fallback
-        const { data: created } = await supabase
+        // Attempt to create or update profile row with upsert using onConflict: 'id'
+        const { data: created, error: upsertError } = await supabase
           .from('profiles')
-          .insert({
-            id: uid,
-            user_id: uid,
-            display_name: fallbackProfile.display_name,
-            tracking_key: uid,
-            forwarding_active: true,
-          })
+          .upsert(
+            {
+              id: uid,
+              user_id: uid,
+              display_name: fallbackProfile.display_name,
+              tracking_key: uid,
+              forwarding_active: true,
+            },
+            { onConflict: 'id' }
+          )
           .select('*')
           .maybeSingle();
 
-        setProfile((created as Profile) || fallbackProfile);
+        if (upsertError) {
+          console.warn('Profile upsert notice:', upsertError.message);
+          // Fallback refetch in case row already exists
+          const { data: refetched } = await supabase
+            .from('profiles')
+            .select('*')
+            .or(`user_id.eq.${uid},id.eq.${uid}`)
+            .maybeSingle();
+          setProfile((refetched as Profile) || fallbackProfile);
+        } else {
+          setProfile((created as Profile) || fallbackProfile);
+        }
       } else {
         setProfile(data as Profile);
       }

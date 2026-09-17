@@ -64,20 +64,19 @@ export default async function handler(req: any, res: any) {
             password: password,
           });
 
-          // Ensure profile exists
-          const { data: prof } = await supabaseAdmin
-            .from('profiles')
-            .select('id')
-            .eq('user_id', existing.id)
-            .maybeSingle();
-
-          if (!prof) {
-            await supabaseAdmin.from('profiles').insert({
+          // Ensure profile exists using upsert
+          const { error: profError } = await supabaseAdmin.from('profiles').upsert(
+            {
               id: existing.id,
               user_id: existing.id,
               display_name: email.split('@')[0],
               tracking_key: existing.id,
-            });
+            },
+            { onConflict: 'id' }
+          );
+
+          if (profError) {
+            console.warn('Profile upsert notice for existing user:', profError.message);
           }
 
           return res.status(200).json({ success: true, message: 'User updated and confirmed' });
@@ -87,14 +86,21 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: createError.message });
     }
 
-    // 2. Ensure profile exists for the newly created user
+    // 2. Ensure profile exists for the newly created user using upsert
     if (createdUser?.user) {
-      await supabaseAdmin.from('profiles').insert({
-        id: createdUser.user.id,
-        user_id: createdUser.user.id,
-        display_name: email.split('@')[0],
-        tracking_key: createdUser.user.id,
-      });
+      const { error: profError } = await supabaseAdmin.from('profiles').upsert(
+        {
+          id: createdUser.user.id,
+          user_id: createdUser.user.id,
+          display_name: email.split('@')[0],
+          tracking_key: createdUser.user.id,
+        },
+        { onConflict: 'id' }
+      );
+
+      if (profError) {
+        console.warn('Profile upsert notice for new user:', profError.message);
+      }
     }
 
     return res.status(200).json({ success: true, user: createdUser?.user });

@@ -31,3 +31,4 @@ CREATE POLICY "allow_read_ad_campaign_metrics" ON public.ad_campaign_metrics
 -- Indexes for optimal querying by date and campaign
 CREATE INDEX IF NOT EXISTS idx_ad_campaign_metrics_date ON public.ad_campaign_metrics (date DESC);
 CREATE INDEX IF NOT EXISTS idx_ad_campaign_metrics_campaign ON public.ad_campaign_metrics (campaign_id);
+

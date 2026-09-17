@@ -87,19 +87,18 @@ function devApiPlugin(env: Record<string, string>): Plugin {
                     password: password,
                   });
 
-                  const { data: prof } = await supabaseAdmin
-                    .from('profiles')
-                    .select('id')
-                    .eq('user_id', existing.id)
-                    .maybeSingle();
-
-                  if (!prof) {
-                    await supabaseAdmin.from('profiles').insert({
+                  const { error: profError } = await supabaseAdmin.from('profiles').upsert(
+                    {
                       id: existing.id,
                       user_id: existing.id,
                       display_name: email.split('@')[0],
                       tracking_key: existing.id,
-                    });
+                    },
+                    { onConflict: 'id' }
+                  );
+
+                  if (profError) {
+                    console.warn('Dev server profile upsert notice:', profError.message);
                   }
 
                   res.statusCode = 200;
@@ -116,12 +115,19 @@ function devApiPlugin(env: Record<string, string>): Plugin {
             }
 
             if (createdUser?.user) {
-              await supabaseAdmin.from('profiles').insert({
-                id: createdUser.user.id,
-                user_id: createdUser.user.id,
-                display_name: email.split('@')[0],
-                tracking_key: createdUser.user.id,
-              });
+              const { error: profError } = await supabaseAdmin.from('profiles').upsert(
+                {
+                  id: createdUser.user.id,
+                  user_id: createdUser.user.id,
+                  display_name: email.split('@')[0],
+                  tracking_key: createdUser.user.id,
+                },
+                { onConflict: 'id' }
+              );
+
+              if (profError) {
+                console.warn('Dev server profile upsert notice for new user:', profError.message);
+              }
             }
 
             res.statusCode = 200;
