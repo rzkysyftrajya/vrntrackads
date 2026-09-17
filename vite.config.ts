@@ -76,36 +76,10 @@ function devApiPlugin(env: Record<string, string>): Plugin {
                 createError.message?.toLowerCase().includes('already') ||
                 createError.message?.toLowerCase().includes('exists')
               ) {
-                const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
-                const existing = listData?.users?.find(
-                  (u) => u.email?.toLowerCase() === email.toLowerCase()
-                );
-
-                if (existing) {
-                  await supabaseAdmin.auth.admin.updateUserById(existing.id, {
-                    email_confirm: true,
-                    password: password,
-                  });
-
-                  const { error: profError } = await supabaseAdmin.from('profiles').upsert(
-                    {
-                      id: existing.id,
-                      user_id: existing.id,
-                      display_name: email.split('@')[0],
-                      tracking_key: existing.id,
-                    },
-                    { onConflict: 'id' }
-                  );
-
-                  if (profError) {
-                    console.warn('Dev server profile upsert notice:', profError.message);
-                  }
-
-                  res.statusCode = 200;
-                  res.setHeader('Content-Type', 'application/json');
-                  res.end(JSON.stringify({ success: true, message: 'User updated and confirmed' }));
-                  return;
-                }
+                res.statusCode = 409;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify({ error: 'An account with this email already exists' }));
+                return;
               }
 
               res.statusCode = 400;
