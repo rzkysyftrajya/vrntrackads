@@ -39,6 +39,8 @@ export default function SettingsPage() {
   const [selectedWebsiteId, setSelectedWebsiteId] = useState<string | null>(null);
   const [websiteName, setWebsiteName] = useState('');
   const [websiteDomain, setWebsiteDomain] = useState('');
+  const [editingDomain, setEditingDomain] = useState('');
+  const [domainSaving, setDomainSaving] = useState(false);
   const [websiteSaving, setWebsiteSaving] = useState(false);
 
   useEffect(() => {
@@ -86,6 +88,45 @@ export default function SettingsPage() {
     ? 'https://vrnadvertiser.vercel.app'
     : window.location.origin;
   const snippet = `<script src="${sdkDomain}/track.js" data-tracking-id="${trackingKey}"></script>`;
+
+  useEffect(() => {
+    setEditingDomain(selectedWebsite?.domain || '');
+  }, [selectedWebsite?.id, selectedWebsite?.domain]);
+
+  async function handleUpdateDomain() {
+    if (!selectedWebsite) {
+      notify('Pilih website yang ingin diperbarui terlebih dahulu.', 'error');
+      return;
+    }
+
+    const domain = editingDomain.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (!domain) {
+      notify('Domain website wajib diisi.', 'error');
+      return;
+    }
+
+    setDomainSaving(true);
+    try {
+      const { data, error } = await supabase
+        .from('websites')
+        .update({ domain })
+        .eq('id', selectedWebsite.id)
+        .select('*')
+        .single();
+
+      if (error) {
+        notify('Gagal memperbarui domain: ' + error.message, 'error');
+        return;
+      }
+
+      setWebsites((previous) => previous.map((site) => site.id === selectedWebsite.id ? data as Website : site));
+      notify('Domain website aktif berhasil diperbarui.', 'success');
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Gagal memperbarui domain.', 'error');
+    } finally {
+      setDomainSaving(false);
+    }
+  }
 
   const appsScriptTemplate = `/**
  * VRN TRACK ADS - Google Sheets Webhook Script
@@ -423,6 +464,28 @@ function doPost(e) {
                 <div className="text-[10px] font-mono text-emerald-300">{site.tracking_key}</div>
               </button>
             ))}
+          </div>
+        )}
+
+        {selectedWebsite && (
+          <div className="mt-4 flex flex-col gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 sm:flex-row sm:items-center">
+            <div className="flex-1">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-cyan-300">Domain website aktif</div>
+              <input
+                value={editingDomain}
+                onChange={(event) => setEditingDomain(event.target.value)}
+                placeholder="vickyrentcarjakarta.com"
+                className="mt-1 w-full rounded-lg border border-white/10 bg-zinc-950/70 px-3 py-2 text-xs text-white outline-none focus:border-cyan-400/50"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleUpdateDomain}
+              disabled={domainSaving}
+              className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/20 disabled:opacity-60"
+            >
+              {domainSaving ? 'Menyimpan...' : 'Simpan Domain'}
+            </button>
           </div>
         )}
       </section>

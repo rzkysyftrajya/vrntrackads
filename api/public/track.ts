@@ -5,11 +5,6 @@ interface RequestWithBody extends IncomingMessage {
   body?: unknown;
 }
 
-interface JsonServerResponse extends ServerResponse {
-  json: (data: unknown) => JsonServerResponse;
-  status: (statusCode: number) => JsonServerResponse;
-}
-
 const BOT_UA_REGEX = /bot|crawler|spider|headless|puppeteer|selenium|playwright|phantom|curl|wget|python|postman|node-fetch|axios|go-http-client|apachebench|ahrefs|semrush|petalbot|bytespider|yandex|facebookexternalhit|bingbot|googlebot|slurp|duckduckbot/i;
 
 interface RateLimitRecord {
@@ -42,7 +37,6 @@ function checkRateLimit(key: string): boolean {
   return true;
 }
 
-// ─── Rapid-click spam detection (per IP, < 10 detik) ────────────────────────
 const SPAM_CLICK_WINDOW_MS = 10 * 1000;
 const lastClickTimestampMap = new Map<string, number>();
 
@@ -59,15 +53,24 @@ function checkSpamSuspect(ip: string): boolean {
   }
 
   if (lastTs !== undefined && now - lastTs < SPAM_CLICK_WINDOW_MS) {
-    return true; // SPAM_SUSPECT
+    return true;
   }
   return false;
 }
 
+// Helper aman untuk mengirimkan response JSON tanpa crash di Vercel
+function sendJsonResponse(res: ServerResponse, statusCode: number, data: unknown) {
+  if (typeof (res as any).status === 'function' && typeof (res as any).json === 'function') {
+    return (res as any).status(statusCode).json(data);
+  }
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(data));
+}
 
 export default async function handler(
   req: RequestWithBody,
-  res: JsonServerResponse
+  res: ServerResponse
 ) {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -75,15 +78,22 @@ export default async function handler(
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, Apikey');
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return sendJsonResponse(res, 405, { error: 'Method not allowed' });
   }
 
   try {
-    const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as Record<string, unknown> | undefined;
+    let body: Record<string, unknown> = {};
+    if (typeof req.body === 'string') {
+      try { body = JSON.parse(req.body); } catch (_) {}
+    } else if (req.body && typeof req.body === 'object') {
+      body = req.body as Record<string, unknown>;
+    }
+
     const {
       event,
       tracking_key,
@@ -92,14 +102,14 @@ export default async function handler(
       is_bot: clientIsBot,
       bot_reasons,
       ...params
-    } = body || {};
+    } = body;
 
     if (!tracking_key || !event) {
-      return res.status(400).json({ error: 'Missing tracking_key or event' });
+      return sendJsonResponse(res, 400, { error: 'Missing tracking_key or event' });
     }
 
     if ((event !== 'page_view' && event !== 'impression') && event !== 'click') {
-      return res.status(400).json({ error: 'Invalid event type' });
+      return sendJsonResponse(res, 400, { error: 'Invalid event type' });
     }
 
     const supabaseUrl =
@@ -154,7 +164,7 @@ export default async function handler(
     }
 
     if (!website) {
-      return res.status(404).json({ error: 'Invalid tracking key' });
+      return sendJsonResponse(res, 404, { error: 'Invalid tracking key' });
     }
 
     const userAgentParam = typeof params.user_agent === 'string' ? params.user_agent : '';
@@ -191,7 +201,6 @@ export default async function handler(
       (req.headers.referer ?? '');
     const referrer = typeof params.referrer === 'string' ? params.referrer : '';
 
-    // Advanced Bot & Click Fraud Detection
     let isBot = Boolean(clientIsBot);
     const detectionReasons: string[] = Array.isArray(bot_reasons)
       ? bot_reasons.map((r) => String(r))
@@ -228,7 +237,6 @@ export default async function handler(
       }
     }
 
-    // 4. Rapid-click Spam Detection (per IP, < 10 detik)
     let isSpamSuspect = false;
     if (event === 'click' && !isBot) {
       isSpamSuspect = checkSpamSuspect(ip);
@@ -237,7 +245,6 @@ export default async function handler(
       }
     }
 
-    // Tentukan status akhir event
     const eventStatus = isBot || isDuplicateGclid
       ? 'BOT_FILTERED'
       : isSpamSuspect
@@ -249,8 +256,6 @@ export default async function handler(
     const utmMedium = typeof params.utm_medium === 'string' ? params.utm_medium : null;
     const utmCampaign = typeof params.utm_campaign === 'string' ? params.utm_campaign : null;
     const keyword = typeof params.keyword === 'string' ? params.keyword : null;
-    const clickTarget = typeof params.click_target === 'string' ? params.click_target : null;
-    const targetText = typeof params.target_text === 'string' ? params.target_text : null;
     const sessionId = typeof session_id === 'string' ? session_id : null;
     const clientFingerprint = typeof fingerprint === 'string' ? fingerprint : null;
 
@@ -276,38 +281,25 @@ export default async function handler(
     };
 
     if (event === 'page_view' || event === 'impression') {
-      const pageViewPayload = {
-        ...commonFields,
-      };
-
-      try {
-        const { error } = await supabase.from('page_views').insert(pageViewPayload);
-        if (error) throw error;
-      } catch {
-        const legacy = await supabase.from('impressions').insert(pageViewPayload);
-        if (legacy.error) {
-          return res.status(500).json({ error: 'Failed to save page view', details: legacy.error.message });
-        }
+      const { error: pageViewErr } = await supabase.from('page_views').insert(commonFields);
+      if (pageViewErr) {
+        console.error('Supabase page_views insert error:', pageViewErr.message);
+        await supabase.from('impressions').insert(commonFields).catch(() => {});
       }
     } else {
-      const { error } = await supabase.from('clicks').insert({
+      const { error: clickErr } = await supabase.from('clicks').insert({
         ...commonFields,
         gclid,
         utm_source: utmSource,
         utm_medium: utmMedium,
         utm_campaign: utmCampaign,
         keyword,
-        click_target: clickTarget,
-        target_text: targetText,
       });
-      if (error) {
-        return res.status(500).json({ error: 'Failed to save click', details: error.message });
+      if (clickErr) {
+        console.error('Supabase clicks insert error:', clickErr.message);
       }
     }
 
-    // Forwarding ke Google Apps Script
-    // BOT_FILTERED → tidak dikirim ke Sheets
-    // SPAM_SUSPECT / OK → dikirim dengan field status agar Sheets bisa memberi warna merah
     const shouldForward =
       website.forwarding_active !== false &&
       Boolean(website.apps_script_url) &&
@@ -333,8 +325,6 @@ export default async function handler(
         utm_medium: utmMedium,
         utm_campaign: utmCampaign,
         keyword,
-        click_target: clickTarget,
-        target_text: targetText,
         timestamp: new Date().toISOString(),
         session_id: sessionId,
         fingerprint: clientFingerprint,
@@ -356,7 +346,7 @@ export default async function handler(
         .catch(() => {});
     }
 
-    return res.status(200).json({
+    return sendJsonResponse(res, 200, {
       success: true,
       event,
       status: eventStatus,
@@ -365,6 +355,7 @@ export default async function handler(
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
-    return res.status(500).json({ error: message });
+    console.error('Tracking Handler Error:', message);
+    return sendJsonResponse(res, 500, { error: message });
   }
 }

@@ -1,192 +1,84 @@
-/**
- * VRN TRACK ADS — Tracking SDK v1.0 (Fixed & Robust)
- * Modernized with global window object API, anti-spam mechanisms, fallback endpoints,
- * and standard event listeners for Single Page Applications (SPA).
- */
-(function () {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+import { createClient } from '@supabase/supabase-js';
 
-  // 1. Ambil script element dan atribut dasarnya
-  var scriptEl = document.currentScript || document.querySelector('script[data-tracking-id], script[data-tracking-key], script[src*="track.js"]');
-  var trackingKey = scriptEl ? (scriptEl.getAttribute('data-tracking-id') || scriptEl.getAttribute('data-tracking-key')) : null;
+// Inisialisasi Supabase dengan Service Role Key agar bypass RLS
+const supabase = createClient(
+  process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  { auth: { persistSession: false } }
+);
 
-  var endpoint = scriptEl ? scriptEl.getAttribute('data-endpoint') : null;
-  
-  if (!endpoint) {
-    if (scriptEl && scriptEl.src && scriptEl.src.indexOf('http') === 0) {
-      endpoint = scriptEl.src.replace(/\/track\.js.*$/, '/api/public/track');
-    } else {
-      endpoint = '/api/public/track';
+export default async function handler(req: any, res: any) {
+  // 1. Handling CORS Preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  try {
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+
+    // Destrukturisasi aman untuk mencegah crash jika ada field undefined
+    const {
+      tracking_key,
+      event,
+      page_url,
+      referrer,
+      session_id,
+      device,
+      browser,
+      gclid,
+      utm_source,
+      utm_medium,
+      utm_campaign,
+      utm_content,
+      utm_term,
+      keyword,
+      user_agent,
+      element_text,
+      element_href
+    } = body;
+
+    if (!tracking_key) {
+      return res.status(400).json({ success: false, error: 'Missing tracking_key' });
     }
-  }
 
-  // 2. Helper Functions
-  function getParam(name) {
-    try {
-      var m = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
-      return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
-    } catch (_) {
-      return '';
-    }
-  }
-
-  function detectDevice() {
-    var ua = navigator.userAgent || '';
-    if (/iPad|Tablet/i.test(ua)) return 'Tablet';
-    if (/Mobile|Android|iPhone|iPod/i.test(ua)) return 'Mobile';
-    return 'Desktop';
-  }
-
-  function detectBrowser() {
-    var ua = navigator.userAgent || '';
-    if (/Edg\//i.test(ua)) return 'Edge';
-    if (/OPR\//i.test(ua)) return 'Opera';
-    if (/Chrome\//i.test(ua)) return 'Chrome';
-    if (/Firefox\//i.test(ua)) return 'Firefox';
-    if (/Safari\//i.test(ua)) return 'Safari';
-    return 'Unknown';
-  }
-
-  function getSessionId() {
-    var key = 'vrn_session_id';
-    try {
-      var existing = sessionStorage.getItem(key);
-      if (existing) return existing;
-      var generated = 'sess_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
-      sessionStorage.setItem(key, generated);
-      return generated;
-    } catch (_) {
-      return '';
-    }
-  }
-
-  function sendBeaconOrXHR(url, body, onFail) {
-    try {
-      if (navigator.sendBeacon) {
-        var blob = new Blob([body], { type: 'application/json' });
-        var sent = navigator.sendBeacon(url, blob);
-        if (!sent && onFail) onFail();
-      } else {
-        var xhr = new XMLHttpRequest();
-        xhr.open('POST', url, true);
-        xhr.setRequestHeader('Content-Type', 'application/json');
-        if (onFail) {
-          xhr.onerror = onFail;
+    // 2. Simpan ke Supabase (Sesuaikan nama tabel kamu, contoh: 'clicks' atau 'events')
+    const { data, error } = await supabase
+      .from('clicks') // Ganti dengan nama tabel tracking kamu di Supabase
+      .insert([
+        {
+          tracking_key,
+          event_type: event || 'page_view',
+          page_url: page_url || '',
+          referrer: referrer || null,
+          session_id: session_id || null,
+          device: device || 'Desktop',
+          browser: browser || 'Unknown',
+          gclid: gclid || null,
+          utm_source: utm_source || null,
+          utm_medium: utm_medium || null,
+          utm_campaign: utm_campaign || null,
+          utm_content: utm_content || null,
+          utm_term: utm_term || null,
+          keyword: keyword || null,
+          user_agent: user_agent || null,
+          element_text: element_text || null,
+          element_href: element_href || null,
+          created_at: new Date().toISOString()
         }
-        xhr.send(body);
-      }
-    } catch (_) {
-      if (onFail) onFail();
+      ]);
+
+    if (error) {
+      console.error('Supabase Insert Error:', error);
+      return res.status(500).json({ success: false, error: error.message });
     }
+
+    return res.status(200).json({ success: true, data });
+  } catch (err: any) {
+    console.error('API Route Crash:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Internal Error' });
   }
-
-  // 3. Objek VRNTrack Global
-  var clickDebounceTimer = null;
-  var CLICK_DEBOUNCE_MS = 3000;
-
-  var VRNTrack = {
-    tracking_key: trackingKey,
-    
-    init: function (config) {
-      if (config && config.tracking_key) {
-        this.tracking_key = config.tracking_key;
-      }
-      this.trackImpression();
-    },
-
-    sendEvent: function (event, extra) {
-      var activeKey = this.tracking_key || trackingKey;
-      if (!activeKey) {
-        console.warn('[VRNTrack] Skipping event, no tracking_key provided.');
-        return;
-      }
-
-      var payload = {
-        tracking_key: activeKey,
-        event: event,
-        landing_page: window.location.href,
-        page_url: window.location.href,
-        referrer: document.referrer || '',
-        session_id: getSessionId(),
-        device: detectDevice(),
-        browser: detectBrowser(),
-        gclid: getParam('gclid'),
-        utm_source: getParam('utm_source'),
-        utm_medium: getParam('utm_medium'),
-        utm_campaign: getParam('utm_campaign'),
-        utm_content: getParam('utm_content'),
-        utm_term: getParam('utm_term'),
-        keyword: getParam('keyword'),
-        user_agent: navigator.userAgent || '',
-        timestamp: new Date().toISOString()
-      };
-
-      var data = Object.assign({}, payload, extra || {});
-      var body = JSON.stringify(data);
-
-      try {
-        if (window.fetch) {
-          window.fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: body,
-            keepalive: true,
-          }).catch(function () {
-            sendBeaconOrXHR(endpoint, body);
-          });
-        } else {
-          sendBeaconOrXHR(endpoint, body);
-        }
-      } catch (_) {
-        sendBeaconOrXHR(endpoint, body);
-      }
-    },
-
-    trackImpression: function () {
-      var activeKey = this.tracking_key || trackingKey;
-      var pageViewKey = 'vrn_pageview_sent_' + (activeKey || 'default') + '_' + window.location.href;
-
-      try {
-        if (sessionStorage.getItem(pageViewKey)) return;
-        sessionStorage.setItem(pageViewKey, '1');
-      } catch (_) { /* Jika private mode/disabled, tetap jalankan */ }
-
-      this.sendEvent('page_view');
-    },
-
-    trackClick: function (extraData) {
-      if (clickDebounceTimer !== null) return; // Debounce 3 detik
-      
-      clickDebounceTimer = setTimeout(function () {
-        clickDebounceTimer = null;
-      }, CLICK_DEBOUNCE_MS);
-
-      this.sendEvent('click', extraData);
-    }
-  };
-
-  // Bind ke window object agar GoogleAdsTracker / React bisa mengaksesnya
-  window.VRNTrack = VRNTrack;
-
-  // 4. Auto-Run Impression & Event Listener
-  if (document && typeof document.addEventListener === 'function') {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () {
-        VRNTrack.trackImpression();
-      });
-    } else {
-      VRNTrack.trackImpression();
-    }
-
-    document.addEventListener('click', function (e) {
-      var target = e ? (e.target || e.srcElement) : null;
-      var el = target && target.closest ? target.closest('a, button, [data-vrn-cta], [role="button"]') : null;
-      if (el) {
-        VRNTrack.trackClick({
-          element_text: el.textContent ? el.textContent.trim().substring(0, 50) : '',
-          element_href: el.getAttribute('href') || ''
-        });
-      }
-    }, true);
-  }
-})();
+}
