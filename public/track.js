@@ -1,84 +1,82 @@
-import { createClient } from '@supabase/supabase-js';
+(function () {
+  'use strict';
 
-// Inisialisasi Supabase dengan Service Role Key agar bypass RLS
-const supabase = createClient(
-  process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || '',
-  { auth: { persistSession: false } }
-);
+  // 1. Ambil script tag & Tracking Key
+  var currentScript = document.currentScript || document.querySelector('script[data-tracking-id]');
+  var trackingKey = currentScript ? currentScript.getAttribute('data-tracking-id') : null;
 
-export default async function handler(req: any, res: any) {
-  // 1. Handling CORS Preflight
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  if (!trackingKey) {
+    console.error('[VRN Track] Error: attribute data-tracking-id tidak ditemukan!');
+    return;
   }
 
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  // 2. Parse URL Parameters (UTM, GCLID, Keyword)
+  var urlParams = new URLSearchParams(window.location.search);
+  var gclid = urlParams.get('gclid') || '';
+  var utmSource = urlParams.get('utm_source') || '';
+  var utmMedium = urlParams.get('utm_medium') || '';
+  var utmCampaign = urlParams.get('utm_campaign') || '';
+  var keyword = urlParams.get('keyword') || urlParams.get('utm_term') || '';
+
+  // 3. Buat Session ID sederhana
+  var sessionId = localStorage.getItem('vrn_session_id');
+  if (!sessionId) {
+    sessionId = 'sess_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+    localStorage.setItem('vrn_session_id', sessionId);
   }
 
-  try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+  // Target Endpoint API Vercel kamu
+  var ENDPOINT = '/api/public/track';
 
-    // Destrukturisasi aman untuk mencegah crash jika ada field undefined
-    const {
-      tracking_key,
-      event,
-      page_url,
-      referrer,
-      session_id,
-      device,
-      browser,
-      gclid,
-      utm_source,
-      utm_medium,
-      utm_campaign,
-      utm_content,
-      utm_term,
-      keyword,
-      user_agent,
-      element_text,
-      element_href
-    } = body;
+  // Fungsi pengiriman payload
+  function sendEvent(eventType, extraData) {
+    var payload = Object.assign({
+      event: eventType,
+      tracking_key: trackingKey,
+      session_id: sessionId,
+      landing_page: window.location.href,
+      page_url: window.location.href,
+      referrer: document.referrer || '',
+      gclid: gclid,
+      utm_source: utmSource,
+      utm_medium: utmMedium,
+      utm_campaign: utmCampaign,
+      keyword: keyword,
+      user_agent: navigator.userAgent
+    }, extraData || {});
 
-    if (!tracking_key) {
-      return res.status(400).json({ success: false, error: 'Missing tracking_key' });
+    var blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(ENDPOINT, blob);
+    } else {
+      fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }).catch(function (err) {
+        console.error('[VRN Track] Fetch error:', err);
+      });
     }
-
-    // 2. Simpan ke Supabase (Sesuaikan nama tabel kamu, contoh: 'clicks' atau 'events')
-    const { data, error } = await supabase
-      .from('clicks') // Ganti dengan nama tabel tracking kamu di Supabase
-      .insert([
-        {
-          tracking_key,
-          event_type: event || 'page_view',
-          page_url: page_url || '',
-          referrer: referrer || null,
-          session_id: session_id || null,
-          device: device || 'Desktop',
-          browser: browser || 'Unknown',
-          gclid: gclid || null,
-          utm_source: utm_source || null,
-          utm_medium: utm_medium || null,
-          utm_campaign: utm_campaign || null,
-          utm_content: utm_content || null,
-          utm_term: utm_term || null,
-          keyword: keyword || null,
-          user_agent: user_agent || null,
-          element_text: element_text || null,
-          element_href: element_href || null,
-          created_at: new Date().toISOString()
-        }
-      ]);
-
-    if (error) {
-      console.error('Supabase Insert Error:', error);
-      return res.status(500).json({ success: false, error: error.message });
-    }
-
-    return res.status(200).json({ success: true, data });
-  } catch (err: any) {
-    console.error('API Route Crash:', err);
-    return res.status(500).json({ success: false, error: err.message || 'Internal Error' });
   }
-}
+
+  // 4. Kirim Page View saat halaman dimuat
+  sendEvent('page_view');
+
+  // 5. Track Klik (Contoh: Tombol WhatsApp / Telepon)
+  document.addEventListener('click', function (e) {
+    var target = e.target.closest('a, button');
+    if (!target) return;
+
+    var href = target.getAttribute('href') || '';
+    var text = (target.innerText || target.textContent || '').trim();
+
+    if (href.includes('wa.me') || href.includes('whatsapp.com') || href.startsWith('tel:')) {
+      sendEvent('click', {
+        element_text: text,
+        element_href: href
+      });
+    }
+  }, true);
+
+})();
