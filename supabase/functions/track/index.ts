@@ -108,7 +108,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "Missing tracking_key or event" }, 400);
     }
 
-    if (event !== "impression" && event !== "click") {
+    if ((event !== "page_view" && event !== "impression") && event !== "click") {
       return jsonResponse({ error: "Invalid event type" }, 400);
     }
 
@@ -125,14 +125,43 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Look up the profile by tracking_key to get user_id + forwarding config
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("id, user_id, apps_script_url, forwarding_active")
-      .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
+    let profile = null as null | {
+      id: string;
+      user_id: string;
+      apps_script_url: string | null;
+      forwarding_active: boolean;
+      tracking_key: string;
+    };
+
+    const { data: websiteProfile, error: websiteError } = await supabase
+      .from("websites")
+      .select("id, user_id, apps_script_url, forwarding_active, tracking_key")
+      .eq("tracking_key", tracking_key)
       .maybeSingle();
 
-    if (profileError || !profile) {
+    if (!websiteError && websiteProfile) {
+      profile = websiteProfile;
+    }
+
+    if (!profile) {
+      const { data: legacyProfile, error: legacyError } = await supabase
+        .from("profiles")
+        .select("id, user_id, apps_script_url, forwarding_active, tracking_key")
+        .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
+        .maybeSingle();
+
+      if (!legacyError && legacyProfile) {
+        profile = {
+          id: legacyProfile.id,
+          user_id: legacyProfile.user_id,
+          apps_script_url: legacyProfile.apps_script_url,
+          forwarding_active: legacyProfile.forwarding_active,
+          tracking_key: legacyProfile.tracking_key,
+        };
+      }
+    }
+
+    if (!profile) {
       return jsonResponse({ error: "Invalid tracking key" }, 404);
     }
 
@@ -223,6 +252,7 @@ Deno.serve(async (req: Request) => {
         : "OK";
 
     const commonFields = {
+      website_id: profile.id,
       user_id: profile.user_id,
       tracking_key,
       device: params.device || uaDevice,
@@ -233,14 +263,21 @@ Deno.serve(async (req: Request) => {
     };
 
     // Save event to database
-    if (event === "impression") {
-      const { error } = await supabase.from("impressions").insert({
+    if (event === "page_view" || event === "impression") {
+      const pageViewPayload = {
         ...commonFields,
         browser: uaBrowser,
         referrer,
-      });
-      if (error) {
-        return jsonResponse({ error: "Failed to save impression", details: error.message }, 500);
+      };
+
+      try {
+        const { error } = await supabase.from("page_views").insert(pageViewPayload);
+        if (error) throw error;
+      } catch {
+        const legacy = await supabase.from("impressions").insert(pageViewPayload);
+        if (legacy.error) {
+          return jsonResponse({ error: "Failed to save page view", details: legacy.error.message }, 500);
+        }
       }
     } else {
       const { error } = await supabase.from("clicks").insert({

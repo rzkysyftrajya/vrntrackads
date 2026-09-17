@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
-import type { TimelinePoint, LiveFeedItem, DateFilter, Impression, Click } from '@/lib/types';
+import type { TimelinePoint, LiveFeedItem, DateFilter, Impression, Click, Website } from '@/lib/types';
 import type { PageId } from '@/components/Layout';
 import {
   Eye,
@@ -58,6 +58,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
   const [loading, setLoading] = useState(true);
   const [simulating, setSimulating] = useState(false);
   const [chartReady, setChartReady] = useState(false);
+  const [websites, setWebsites] = useState<Website[]>([]);
+  const [selectedWebsiteId, setSelectedWebsiteId] = useState<string | null>(null);
   const chartAnimKey = useRef(0);
 
   // Date Range Filter State ('today', 'yesterday', '7days', 'custom')
@@ -72,6 +74,41 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
   });
 
   const trackingKey = profile?.tracking_key || profile?.user_id;
+  const activeWebsite = websites.find((site) => site.id === selectedWebsiteId) ?? websites[0] ?? null;
+
+  if (activeWebsite) {
+    // Keep selected website context available for future multi-site UI widgets.
+  }
+
+  useEffect(() => {
+    if (!profile?.user_id) {
+      setWebsites([]);
+      setSelectedWebsiteId(null);
+      return;
+    }
+
+    let isMounted = true;
+
+    supabase
+      .from('websites')
+      .select('*')
+      .eq('user_id', profile.user_id)
+      .order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (!isMounted || error) return;
+
+        const nextWebsites = (data || []) as Website[];
+        setWebsites(nextWebsites);
+        setSelectedWebsiteId((current) => {
+          if (current && nextWebsites.some((site) => site.id === current)) return current;
+          return nextWebsites[0]?.id ?? null;
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [profile?.user_id]);
 
   const loadData = useCallback(async () => {
     if (!trackingKey) {
@@ -83,21 +120,22 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       setLoading(true);
       const bounds = getDateRangeBounds(dateFilter, customStartDate, customEndDate);
 
-      // 1. Fetch impressions from Supabase filtered by timestamp ('created_at') using .gte() and .lte() ISO date strings
-      const impQuery = supabase
-        .from('impressions')
-        .select('*')
-        .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
+      const pageViewsTable = 'page_views';
+      const websiteScopedQuery = selectedWebsiteId
+        ? supabase.from(pageViewsTable).select('*').eq('website_id', selectedWebsiteId)
+        : supabase.from(pageViewsTable).select('*').or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`);
+
+      const websiteScopedClickQuery = selectedWebsiteId
+        ? supabase.from('clicks').select('*').eq('website_id', selectedWebsiteId)
+        : supabase.from('clicks').select('*').or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`);
+
+      const impQuery = websiteScopedQuery
         .gte('created_at', bounds.startIso)
         .lte('created_at', bounds.endIso)
         .order('created_at', { ascending: false })
         .limit(500);
 
-      // 2. Fetch clicks from Supabase filtered by timestamp ('created_at') using .gte() and .lte() ISO date strings
-      const clkQuery = supabase
-        .from('clicks')
-        .select('*')
-        .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
+      const clkQuery = websiteScopedClickQuery
         .gte('created_at', bounds.startIso)
         .lte('created_at', bounds.endIso)
         .order('created_at', { ascending: false })
@@ -107,28 +145,18 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         await Promise.all([impQuery, clkQuery]);
 
       // Fallback: in case Supabase schema uses 'timestamp' column name instead of 'created_at'
-      if (impErr && (impErr.message?.includes('created_at') || (impErr as { code?: string }).code === '42703')) {
-        const fallbackImp = await supabase
-          .from('impressions')
-          .select('*')
-          .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
-          .gte('timestamp', bounds.startIso)
-          .lte('timestamp', bounds.endIso)
-          .order('timestamp', { ascending: false })
-          .limit(500);
+      if (impErr && (impErr.message?.includes('page_views') || impErr.message?.includes('impressions') || impErr.message?.includes('created_at') || (impErr as { code?: string }).code === '42703' || (impErr as { code?: string }).code === '42P01')) {
+        const fallbackImp = selectedWebsiteId
+          ? await supabase.from('impressions').select('*').eq('website_id', selectedWebsiteId).gte('timestamp', bounds.startIso).lte('timestamp', bounds.endIso).order('timestamp', { ascending: false }).limit(500)
+          : await supabase.from('impressions').select('*').or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`).gte('timestamp', bounds.startIso).lte('timestamp', bounds.endIso).order('timestamp', { ascending: false }).limit(500);
         impressions = fallbackImp.data;
         impErr = fallbackImp.error;
       }
 
       if (clkErr && (clkErr.message?.includes('created_at') || (clkErr as { code?: string }).code === '42703')) {
-        const fallbackClk = await supabase
-          .from('clicks')
-          .select('*')
-          .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
-          .gte('timestamp', bounds.startIso)
-          .lte('timestamp', bounds.endIso)
-          .order('timestamp', { ascending: false })
-          .limit(500);
+        const fallbackClk = selectedWebsiteId
+          ? await supabase.from('clicks').select('*').eq('website_id', selectedWebsiteId).gte('timestamp', bounds.startIso).lte('timestamp', bounds.endIso).order('timestamp', { ascending: false }).limit(500)
+          : await supabase.from('clicks').select('*').or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`).gte('timestamp', bounds.startIso).lte('timestamp', bounds.endIso).order('timestamp', { ascending: false }).limit(500);
         clicks = fallbackClk.data;
         clkErr = fallbackClk.error;
       }
@@ -268,6 +296,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
     profile?.apps_script_url,
     profile?.forwarding_active,
     trackingKey,
+    selectedWebsiteId,
     dateFilter,
     customStartDate,
     customEndDate,
@@ -285,10 +314,10 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       .channel(`rt-imp-${trackingKey}`)
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'impressions' },
+        { event: 'INSERT', schema: 'public', table: 'page_views' },
         (payload) => {
           const r = payload.new as Record<string, unknown>;
-          if (r.tracking_key === trackingKey || r.user_id === profile?.user_id) {
+          if ((selectedWebsiteId && r.website_id === selectedWebsiteId) || r.tracking_key === trackingKey || r.user_id === profile?.user_id) {
             const item: LiveFeedItem = {
               id: String(r.id || ''),
               type: 'impression',
@@ -344,7 +373,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         { event: 'INSERT', schema: 'public', table: 'clicks' },
         (payload) => {
           const r = payload.new as Record<string, unknown>;
-          if (r.tracking_key === trackingKey || r.user_id === profile?.user_id) {
+          if ((selectedWebsiteId && r.website_id === selectedWebsiteId) || r.tracking_key === trackingKey || r.user_id === profile?.user_id) {
             const item: LiveFeedItem = {
               id: String(r.id || ''),
               type: 'click',
@@ -405,13 +434,19 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
     profile?.user_id,
     profile?.apps_script_url,
     profile?.forwarding_active,
+    selectedWebsiteId,
     dateFilter,
     customStartDate,
     customEndDate,
   ]);
 
   // Live Simulation Trigger
-  async function simulateEvent(eventType: 'impression' | 'click') {
+  async function simulateEvent(eventType: 'page_view' | 'click') {
+    if (!trackingKey || trackingKey === 'YOUR_TRACKING_KEY') {
+      notify('Buat atau pilih website aktif terlebih dahulu agar tracking key valid.', 'error');
+      return;
+    }
+
     setSimulating(true);
     const domain = window.location.origin;
 
@@ -429,9 +464,9 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
     const browser = browsers[Math.floor(Math.random() * browsers.length)];
 
     const payload =
-      eventType === 'impression'
+      eventType === 'page_view'
         ? {
-            event: 'impression',
+            event: 'page_view',
             tracking_key: trackingKey,
             landing_page: `${domain}/landing-promo`,
             referrer: 'https://google.com',
@@ -508,30 +543,48 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              onClick={() => simulateEvent('impression')}
-              disabled={simulating}
-              className="flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/20 px-3.5 py-2 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/30 disabled:opacity-50 shadow"
-            >
-              <Zap className="h-3.5 w-3.5 text-emerald-400" />
-              Simulasi Impression
-            </button>
-            <button
-              onClick={() => simulateEvent('click')}
-              disabled={simulating}
-              className="flex items-center gap-1.5 rounded-xl border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-2 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-500/30 disabled:opacity-50 shadow"
-            >
-              <MousePointerClick className="h-3.5 w-3.5 text-cyan-400" />
-              Simulasi Click CTA
-            </button>
-            <button
-              onClick={loadData}
-              className="rounded-xl border border-white/10 bg-white/5 p-2 text-zinc-300 hover:bg-white/10 transition"
-              title="Refresh Dashboard Data"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-300">
+              <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">Website</span>
+              <select
+                value={selectedWebsiteId ?? ''}
+                onChange={(e) => setSelectedWebsiteId(e.target.value || null)}
+                className="rounded-lg border border-white/10 bg-zinc-900 px-2 py-1 text-xs text-white outline-none focus:border-emerald-500"
+              >
+                {websites.length === 0 ? (
+                  <option value="">Belum ada website</option>
+                ) : (
+                  websites.map((site) => (
+                    <option key={site.id} value={site.id}>{site.name}</option>
+                  ))
+                )}
+              </select>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => simulateEvent('page_view')}
+                disabled={simulating}
+                className="flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/20 px-3.5 py-2 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/30 disabled:opacity-50 shadow"
+              >
+                <Zap className="h-3.5 w-3.5 text-emerald-400" />
+                Simulasi Page View
+              </button>
+              <button
+                onClick={() => simulateEvent('click')}
+                disabled={simulating}
+                className="flex items-center gap-1.5 rounded-xl border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-2 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-500/30 disabled:opacity-50 shadow"
+              >
+                <MousePointerClick className="h-3.5 w-3.5 text-cyan-400" />
+                Simulasi Click CTA
+              </button>
+              <button
+                onClick={loadData}
+                className="rounded-xl border border-white/10 bg-white/5 p-2 text-zinc-300 hover:bg-white/10 transition"
+                title="Refresh Dashboard Data"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -641,7 +694,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               </button>
             )}
             <button
-              onClick={() => simulateEvent('impression')}
+              onClick={() => simulateEvent('page_view')}
               className="flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-zinc-900/60 px-4 py-2 text-xs font-semibold text-amber-300 hover:bg-zinc-900 transition"
             >
               Kirim Event Simulasi Sekarang
@@ -654,7 +707,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           icon={Eye}
-          label="Total Impressions (Kunjungan)"
+          label="Total Page Views"
           value={stats.totalImpressions.toLocaleString()}
           accent="emerald"
         />
@@ -696,7 +749,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           </div>
           <div className="flex items-center gap-4 text-xs">
             <span className="flex items-center gap-1.5 text-zinc-400">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" /> Impressions
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" /> Page Views
             </span>
             <span className="flex items-center gap-1.5 text-zinc-400">
               <span className="h-2.5 w-2.5 rounded-full bg-cyan-400" /> Clicks
@@ -710,7 +763,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           {timeline.map((point, i) => (
             <div key={point.date} className="group flex flex-1 flex-col items-center gap-2">
               <div className="flex h-full w-full items-end justify-center gap-1.5">
-                {/* Impression Bar */}
+                {/* Page View Bar */}
                 <div
                   className="relative w-full max-w-[28px] rounded-t-md bg-gradient-to-t from-emerald-600/40 to-emerald-400 group-hover:from-emerald-500/60 group-hover:to-emerald-300"
                   style={{
@@ -872,7 +925,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                           )}
                         </div>
                       ) : (
-                        <span className="text-zinc-500 text-[11px] italic">Impression Visit</span>
+                        <span className="text-zinc-500 text-[11px] italic">Page View Visit</span>
                       )}
                     </td>
 

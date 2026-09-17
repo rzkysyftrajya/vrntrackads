@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
+import type { Website } from '@/lib/types';
 import {
   Key,
   Code2,
@@ -18,6 +19,8 @@ import {
   CheckCircle2,
   AlertCircle,
   HelpCircle,
+  Globe,
+  Plus,
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -32,6 +35,11 @@ export default function SettingsPage() {
   const [copiedScript, setCopiedScript] = useState(false);
   const [showScriptHelper, setShowScriptHelper] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'untested' | 'connected' | 'failed'>('untested');
+  const [websites, setWebsites] = useState<Website[]>([]);
+  const [selectedWebsiteId, setSelectedWebsiteId] = useState<string | null>(null);
+  const [websiteName, setWebsiteName] = useState('');
+  const [websiteDomain, setWebsiteDomain] = useState('');
+  const [websiteSaving, setWebsiteSaving] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -43,7 +51,37 @@ export default function SettingsPage() {
     }
   }, [profile]);
 
-  const trackingKey = profile?.tracking_key || user?.id || 'YOUR_TRACKING_KEY';
+  useEffect(() => {
+    const uid = user?.id || profile?.user_id;
+    if (!uid) {
+      setWebsites([]);
+      setSelectedWebsiteId(null);
+      return;
+    }
+
+    let isMounted = true;
+    supabase
+      .from('websites')
+      .select('*')
+      .eq('user_id', uid)
+      .order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (!isMounted || error) return;
+        const nextWebsites = (data || []) as Website[];
+        setWebsites(nextWebsites);
+        setSelectedWebsiteId((current) => {
+          if (current && nextWebsites.some((site) => site.id === current)) return current;
+          return nextWebsites[0]?.id ?? null;
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id, profile?.user_id]);
+
+  const selectedWebsite = websites.find((site) => site.id === selectedWebsiteId) ?? websites[0] ?? null;
+  const trackingKey = selectedWebsite?.tracking_key || profile?.tracking_key || user?.id || 'YOUR_TRACKING_KEY';
   const sdkDomain = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')
     ? 'https://vrnadvertiser.vercel.app'
     : window.location.origin;
@@ -60,8 +98,8 @@ function doPost(e) {
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet();
     var data = JSON.parse(e.postData.contents);
-    var eventType = data.event || 'impression';
-    var targetSheetName = eventType === 'click' ? 'Clicks' : 'Impressions';
+    var eventType = data.event || 'page_view';
+    var targetSheetName = eventType === 'click' ? 'Clicks' : 'Page Views';
     var targetSheet = sheet.getSheetByName(targetSheetName);
     
     if (!targetSheet) {
@@ -171,14 +209,73 @@ function doPost(e) {
     }
   }
 
+  async function handleAddWebsite() {
+    const uid = user?.id || profile?.user_id;
+    if (!uid) {
+      notify('User belum terdeteksi. Silakan login ulang.', 'error');
+      return;
+    }
+
+    const name = websiteName.trim();
+    if (!name) {
+      notify('Nama website wajib diisi.', 'error');
+      return;
+    }
+
+    setWebsiteSaving(true);
+    try {
+      const tracking = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `site-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+      const payload = {
+        user_id: uid,
+        name,
+        domain: websiteDomain.trim() || null,
+        tracking_key: tracking,
+        apps_script_url: appsScriptUrl.trim() || null,
+        forwarding_active: forwardingActive,
+      };
+
+      const { data, error } = await supabase
+        .from('websites')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) {
+        notify('Gagal menambah website: ' + error.message, 'error');
+        return;
+      }
+
+      const nextWebsite = data as Website;
+      setWebsites((prev) => [nextWebsite, ...prev]);
+      setSelectedWebsiteId(nextWebsite.id);
+      setWebsiteName('');
+      setWebsiteDomain('');
+      notify('Website baru berhasil ditambahkan.', 'success');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Gagal menambah website';
+      notify(message, 'error');
+    } finally {
+      setWebsiteSaving(false);
+    }
+  }
+
   async function handleTestConnection() {
     setTesting(true);
     try {
+      if (!trackingKey || trackingKey === 'YOUR_TRACKING_KEY') {
+        setConnectionStatus('failed');
+        notify('Buat website atau pilih website aktif terlebih dahulu agar tracking key valid.', 'error');
+        return;
+      }
+
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://qtgbuacxiuntczeaqlqi.supabase.co';
       const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_mtB461pYvcwJAtH50KlZrw_S35zH6Pi';
 
       const payload = {
-        event: 'impression',
+        event: 'page_view',
         tracking_key: trackingKey,
         landing_page: `${sdkDomain}/test-connection-page`,
         referrer: 'vrn-track-ads-test',
@@ -269,6 +366,67 @@ function doPost(e) {
         </div>
       </div>
 
+      {/* Website Manager Card */}
+      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl shadow-lg">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Globe className="h-4 w-4 text-emerald-400" />
+            <h3 className="text-sm font-semibold text-white">Website Manager</h3>
+          </div>
+          <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-mono text-emerald-300 border border-emerald-500/20">
+            {websites.length} website{websites.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <input
+            value={websiteName}
+            onChange={(e) => setWebsiteName(e.target.value)}
+            placeholder="Nama website, contoh: My Landing Page"
+            className="w-full rounded-lg border border-white/10 bg-zinc-900/80 px-3.5 py-2.5 text-xs text-white placeholder-zinc-600 outline-none transition focus:border-emerald-500/50"
+          />
+          <input
+            value={websiteDomain}
+            onChange={(e) => setWebsiteDomain(e.target.value)}
+            placeholder="Domain website, contoh: example.com"
+            className="w-full rounded-lg border border-white/10 bg-zinc-900/80 px-3.5 py-2.5 text-xs text-white placeholder-zinc-600 outline-none transition focus:border-emerald-500/50"
+          />
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="flex-1 rounded-lg border border-white/10 bg-zinc-900/70 px-3 py-2 text-[11px] text-zinc-400">
+            {selectedWebsite ? `Website aktif: ${selectedWebsite.name}` : 'Belum ada website aktif'}
+          </div>
+          <button
+            onClick={handleAddWebsite}
+            disabled={websiteSaving}
+            className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-bold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-60"
+          >
+            {websiteSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            Tambah Website
+          </button>
+        </div>
+
+        {websites.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {websites.map((site) => (
+              <button
+                key={site.id}
+                type="button"
+                onClick={() => setSelectedWebsiteId(site.id)}
+                className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left transition ${selectedWebsiteId === site.id ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-white/10 bg-zinc-900/60 hover:bg-white/5'}`}
+              >
+                <div>
+                  <div className="text-xs font-semibold text-white">{site.name}</div>
+                  <div className="text-[10px] text-zinc-400">{site.domain || 'Domain belum diatur'}</div>
+                </div>
+                <div className="text-[10px] font-mono text-emerald-300">{site.tracking_key}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
       {/* Tracking Key Card */}
       <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl shadow-lg">
         <div className="mb-4 flex items-center justify-between">
@@ -281,7 +439,7 @@ function doPost(e) {
           </span>
         </div>
         <p className="mb-4 text-xs text-zinc-400 leading-relaxed">
-          Kunci unik ini mengidentifikasi akun Anda di setiap event kunjungan &amp; klik. Digunakan otomatis pada script pelacak di bawah.
+          Kunci unik ini mengidentifikasi {selectedWebsite ? `website "${selectedWebsite.name}"` : 'website aktif'} di setiap event kunjungan &amp; klik. Digunakan otomatis pada script pelacak di bawah.
         </p>
         <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-zinc-900/80 p-3">
           <code className="flex-1 truncate font-mono text-xs sm:text-sm text-emerald-300 font-bold tracking-wide">

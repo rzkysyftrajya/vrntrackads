@@ -43,9 +43,9 @@ function doPost(e) {
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet();
     var data = JSON.parse(e.postData.contents);
-    var eventType = data.event || 'impression';
+    var eventType = data.event || 'page_view';
     
-    var targetSheetName = eventType === 'click' ? 'Clicks' : 'Impressions';
+    var targetSheetName = eventType === 'click' ? 'Clicks' : 'Page Views';
     var targetSheet = sheet.getSheetByName(targetSheetName);
     
     if (!targetSheet) {
@@ -109,7 +109,7 @@ function doPost(e) {
     html: {
       title: 'Pasang pada Landing Page HTML / PHP',
       code: `<!-- Tambahkan script ini di dalam tag <head> atau sebelum </body> pada Landing Page Anda -->\n${snippet}`,
-      note: 'SDK akan otomatis merekam Impression saat halaman dimuat dan merekam Click saat pengunjung menekan tombol CTA / link.',
+      note: 'SDK akan otomatis merekam Page View saat halaman dimuat dan merekam Click saat pengunjung menekan tombol CTA / link.',
     },
     spreadsheet: {
       title: 'Integrasi Otomatis Google Spreadsheet (Apps Script)',
@@ -211,7 +211,7 @@ function doPost(e) {
         />
         <InfoCard
           title="Auto-Fired Events"
-          items={['Impression (Saat page load)', 'Click (Saat klik CTA/Tombol)', 'Real-Time Sync ke Spreadsheet']}
+          items={['Page View (Saat page load)', 'Click (Saat klik CTA/Tombol)', 'Real-Time Sync ke Spreadsheet']}
         />
       </div>
     </div>

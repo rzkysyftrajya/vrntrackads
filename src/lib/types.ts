@@ -1,5 +1,16 @@
 export type DateFilter = 'today' | 'yesterday' | '7days' | 'custom';
 
+export interface Website {
+  id: string;
+  user_id: string;
+  name: string;
+  domain: string;
+  tracking_key: string;
+  apps_script_url: string | null;
+  forwarding_active: boolean;
+  created_at: string;
+}
+
 export interface Profile {
   id: string;
   user_id: string;
@@ -7,11 +18,13 @@ export interface Profile {
   apps_script_url: string | null;
   tracking_key: string;
   forwarding_active: boolean;
+  website_id?: string | null;
   created_at: string;
 }
 
 export interface Impression {
   id: string;
+  website_id?: string | null;
   user_id: string | null;
   tracking_key: string | null;
   landing_page: string | null;
@@ -26,6 +39,7 @@ export interface Impression {
 
 export interface Click {
   id: string;
+  website_id?: string | null;
   user_id: string | null;
   tracking_key: string | null;
   gclid: string | null;

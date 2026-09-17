@@ -148,14 +148,14 @@
 
     trackImpression: function () {
       var activeKey = this.tracking_key || trackingKey;
-      var IMPRESSION_KEY = 'vrn_impression_sent_' + (activeKey || 'default');
+      var IMPRESSION_KEY = 'vrn_pageview_sent_' + (activeKey || 'default');
 
       try {
         if (sessionStorage.getItem(IMPRESSION_KEY)) return; // Cegah duplikat per sesi browser
         sessionStorage.setItem(IMPRESSION_KEY, '1');
       } catch (_) { /* Jika private mode/disabled, tetap jalankan */ }
 
-      this.sendEvent('impression');
+      this.sendEvent('page_view');
     },
 
     trackClick: function (extraData) {

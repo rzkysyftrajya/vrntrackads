@@ -192,7 +192,7 @@ function devApiPlugin(env: Record<string, string>): Plugin {
               return;
             }
 
-            if (event !== 'impression' && event !== 'click') {
+            if (event !== 'page_view' && event !== 'click') {
               res.statusCode = 400;
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ error: 'Invalid event type' }));
@@ -215,13 +215,43 @@ function devApiPlugin(env: Record<string, string>): Plugin {
               auth: { persistSession: false },
             });
 
-            const { data: profile, error: profileError } = await supabase
-              .from('profiles')
-              .select('id, user_id, apps_script_url, forwarding_active')
-              .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
+            let profile = null as null | {
+              id: string;
+              user_id: string;
+              apps_script_url: string | null;
+              forwarding_active: boolean;
+              tracking_key: string;
+            };
+
+            const { data: websiteProfile, error: websiteError } = await supabase
+              .from('websites')
+              .select('id, user_id, apps_script_url, forwarding_active, tracking_key')
+              .eq('tracking_key', tracking_key)
               .maybeSingle();
 
-            if (profileError || !profile) {
+            if (!websiteError && websiteProfile) {
+              profile = websiteProfile;
+            }
+
+            if (!profile) {
+              const { data: legacyProfile, error: legacyError } = await supabase
+                .from('profiles')
+                .select('id, user_id, apps_script_url, forwarding_active, tracking_key')
+                .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
+                .maybeSingle();
+
+              if (!legacyError && legacyProfile) {
+                profile = {
+                  id: legacyProfile.id,
+                  user_id: legacyProfile.user_id,
+                  apps_script_url: legacyProfile.apps_script_url,
+                  forwarding_active: legacyProfile.forwarding_active,
+                  tracking_key: legacyProfile.tracking_key,
+                };
+              }
+            }
+
+            if (!profile) {
               res.statusCode = 404;
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ error: 'Invalid tracking key' }));
@@ -260,6 +290,7 @@ function devApiPlugin(env: Record<string, string>): Plugin {
             const referrer = params.referrer || '';
 
             const commonFields = {
+              website_id: profile.id,
               user_id: profile.user_id,
               tracking_key,
               device: params.device || uaDevice,
@@ -269,8 +300,8 @@ function devApiPlugin(env: Record<string, string>): Plugin {
               landing_page: landingPage,
             };
 
-            if (event === 'impression') {
-              const { error } = await supabase.from('impressions').insert({
+            if (event === 'page_view') {
+              const { error } = await supabase.from('page_views').insert({
                 ...commonFields,
                 browser: uaBrowser,
                 referrer,
@@ -278,7 +309,7 @@ function devApiPlugin(env: Record<string, string>): Plugin {
               if (error) {
                 res.statusCode = 500;
                 res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({ error: 'Failed to save impression', details: error.message }));
+                res.end(JSON.stringify({ error: 'Failed to save page view', details: error.message }));
                 return;
               }
             } else {

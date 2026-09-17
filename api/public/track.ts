@@ -98,7 +98,7 @@ export default async function handler(
       return res.status(400).json({ error: 'Missing tracking_key or event' });
     }
 
-    if (event !== 'impression' && event !== 'click') {
+    if ((event !== 'page_view' && event !== 'impression') && event !== 'click') {
       return res.status(400).json({ error: 'Invalid event type' });
     }
 
@@ -117,13 +117,43 @@ export default async function handler(
       auth: { persistSession: false },
     });
 
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('id, user_id, apps_script_url, forwarding_active')
-      .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
+    let website = null as null | {
+      id: string;
+      user_id: string;
+      apps_script_url: string | null;
+      forwarding_active: boolean;
+      tracking_key: string;
+    };
+
+    const { data: websiteRow, error: websiteError } = await supabase
+      .from('websites')
+      .select('id, user_id, apps_script_url, forwarding_active, tracking_key')
+      .eq('tracking_key', tracking_key)
       .maybeSingle();
 
-    if (profileError || !profile) {
+    if (!websiteError && websiteRow) {
+      website = websiteRow;
+    }
+
+    if (!website) {
+      const { data: legacyProfile, error: legacyError } = await supabase
+        .from('profiles')
+        .select('id, user_id, apps_script_url, forwarding_active, tracking_key')
+        .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
+        .maybeSingle();
+
+      if (!legacyError && legacyProfile) {
+        website = {
+          id: legacyProfile.id,
+          user_id: legacyProfile.user_id,
+          apps_script_url: legacyProfile.apps_script_url,
+          forwarding_active: legacyProfile.forwarding_active,
+          tracking_key: legacyProfile.tracking_key,
+        };
+      }
+    }
+
+    if (!website) {
       return res.status(404).json({ error: 'Invalid tracking key' });
     }
 
@@ -186,7 +216,7 @@ export default async function handler(
       const { data: existingClick } = await supabase
         .from('clicks')
         .select('id')
-        .eq('tracking_key', tracking_key)
+        .eq('website_id', website.id)
         .eq('gclid', gclid)
         .gte('created_at', oneDayAgo)
         .limit(1)
@@ -225,23 +255,39 @@ export default async function handler(
     const clientFingerprint = typeof fingerprint === 'string' ? fingerprint : null;
 
     const commonFields = {
-      user_id: profile.user_id,
+      website_id: website.id,
+      user_id: website.user_id,
       tracking_key,
-      device,
-      ip_address: ip,
+      session_id: sessionId,
+      fingerprint: clientFingerprint,
+      landing_page: landingPage,
+      page_url: typeof params.page_url === 'string' ? params.page_url : landingPage,
+      referrer,
       country,
       city,
-      landing_page: landingPage,
+      ip_address: ip,
+      device,
+      os: typeof params.os === 'string' ? params.os : null,
+      browser: uaBrowser,
+      user_agent: userAgent,
+      is_bot: isBot,
+      bot_reasons: detectionReasons.join(',') || null,
+      status: eventStatus,
     };
 
-    if (event === 'impression') {
-      const { error } = await supabase.from('impressions').insert({
+    if (event === 'page_view' || event === 'impression') {
+      const pageViewPayload = {
         ...commonFields,
-        browser: uaBrowser,
-        referrer,
-      });
-      if (error) {
-        return res.status(500).json({ error: 'Failed to save impression', details: error.message });
+      };
+
+      try {
+        const { error } = await supabase.from('page_views').insert(pageViewPayload);
+        if (error) throw error;
+      } catch {
+        const legacy = await supabase.from('impressions').insert(pageViewPayload);
+        if (legacy.error) {
+          return res.status(500).json({ error: 'Failed to save page view', details: legacy.error.message });
+        }
       }
     } else {
       const { error } = await supabase.from('clicks').insert({
@@ -251,6 +297,8 @@ export default async function handler(
         utm_medium: utmMedium,
         utm_campaign: utmCampaign,
         keyword,
+        click_target: clickTarget,
+        target_text: targetText,
       });
       if (error) {
         return res.status(500).json({ error: 'Failed to save click', details: error.message });
@@ -261,41 +309,43 @@ export default async function handler(
     // BOT_FILTERED → tidak dikirim ke Sheets
     // SPAM_SUSPECT / OK → dikirim dengan field status agar Sheets bisa memberi warna merah
     const shouldForward =
-      profile.forwarding_active !== false &&
-      Boolean(profile.apps_script_url) &&
+      website.forwarding_active !== false &&
+      Boolean(website.apps_script_url) &&
       eventStatus !== 'BOT_FILTERED';
 
-    if (shouldForward && profile.apps_script_url) {
+    if (shouldForward && website.apps_script_url) {
       const forwardPayload = {
-        event,
+        event: event === 'page_view' ? 'page_view' : 'click',
         tracking_key,
-        user_id: profile.user_id,
+        website_id: website.id,
+        user_id: website.user_id,
         ip_address: ip,
         country,
         city,
         device,
+        os: typeof params.os === 'string' ? params.os : null,
         browser: uaBrowser,
         landing_page: landingPage,
+        page_url: typeof params.page_url === 'string' ? params.page_url : landingPage,
         referrer,
         gclid,
         utm_source: utmSource,
         utm_medium: utmMedium,
         utm_campaign: utmCampaign,
         keyword,
+        click_target: clickTarget,
+        target_text: targetText,
         timestamp: new Date().toISOString(),
         session_id: sessionId,
         fingerprint: clientFingerprint,
-        click_target: clickTarget,
-        target_text: targetText,
-        // ── Status anti-spam ──────────────────────────────────────────────
-        status: eventStatus,                          // "OK" | "SPAM_SUSPECT"
-        spam_suspect: isSpamSuspect,                  // true → warna baris MERAH di Sheets
+        status: eventStatus,
+        spam_suspect: isSpamSuspect,
         detection_reasons: detectionReasons.join(',') || null,
       };
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
-      fetch(profile.apps_script_url, {
+      fetch(website.apps_script_url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(forwardPayload),
