@@ -32,13 +32,13 @@
       user_agent: navigator.userAgent
     }, extraData || {});
 
-    var blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    var blob = new Blob([JSON.stringify(payload)], { type: 'text/plain;charset=UTF-8' });
     if (navigator.sendBeacon) {
       navigator.sendBeacon(ENDPOINT, blob);
     } else {
       fetch(ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify(payload),
         keepalive: true
       }).catch(function () {});
