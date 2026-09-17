@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
@@ -50,6 +50,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
   const [loading, setLoading] = useState(true);
   const [simulating, setSimulating] = useState(false);
   const [chartReady, setChartReady] = useState(false);
+  const chartAnimKey = useRef(0);
 
   const trackingKey = profile?.tracking_key || profile?.user_id;
 
