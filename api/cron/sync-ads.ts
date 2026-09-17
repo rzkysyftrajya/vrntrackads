@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { fetchGoogleAdsMetrics } from '../../lib/googleAds';
+import { fetchGoogleAdsMetrics } from '../../lib/googleAds.js';
 
 export default async function handler(req: any, res: any) {
   // CORS Headers
