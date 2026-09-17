@@ -142,6 +142,20 @@ function devApiPlugin(env: Record<string, string>): Plugin {
           }
         }
 
+        // 3. Google Ads Cron Sync Endpoint (/api/cron/sync-ads)
+        if (url === '/api/cron/sync-ads') {
+          try {
+            const { default: handler } = await import('./api/cron/sync-ads.ts');
+            await handler(req, res);
+            return;
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ success: false, error: err?.message || 'Sync cron error' }));
+            return;
+          }
+        }
+
         // 2. Tracking Endpoint (/api/public/track or /functions/v1/track)
         if (url === '/api/public/track' || url === '/functions/v1/track') {
           res.setHeader('Access-Control-Allow-Origin', '*');

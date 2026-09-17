@@ -1,20 +1,30 @@
-import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { fetchGoogleAdsMetrics, type GoogleAdsCampaignMetric } from '@/lib/googleAds';
+import { fetchGoogleAdsMetrics } from '../../lib/googleAds';
 
-export const dynamic = 'force-dynamic';
+export default async function handler(req: any, res: any) {
+  // CORS Headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-export async function GET(req: NextRequest) {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'GET') {
+    return res.status(405).json({ success: false, error: 'Method not allowed. Use GET.' });
+  }
+
   try {
-    // 1. Optional security check: verify CRON_SECRET for Vercel Cron or external schedulers
+    // 1. Optional security check: verify CRON_SECRET for Vercel Cron
     const cronSecret = process.env.CRON_SECRET;
     if (cronSecret) {
-      const authHeader = req.headers.get('authorization');
+      const authHeader = req.headers?.authorization;
       if (authHeader !== `Bearer ${cronSecret}`) {
-        return NextResponse.json(
-          { success: false, error: 'Unauthorized: Invalid or missing bearer token' },
-          { status: 401 }
-        );
+        return res.status(401).json({
+          success: false,
+          error: 'Unauthorized: Invalid or missing bearer token',
+        });
       }
     }
 
@@ -29,27 +39,24 @@ export async function GET(req: NextRequest) {
       process.env.SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseServiceKey) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Missing Supabase credentials (NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY)',
-        },
-        { status: 500 }
-      );
+      return res.status(500).json({
+        success: false,
+        error: 'Missing Supabase credentials (NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY)',
+      });
     }
 
-    // 3. Fetch metrics from Google Ads
-    const metrics: GoogleAdsCampaignMetric[] = await fetchGoogleAdsMetrics();
+    // 3. Fetch metrics from Google Ads API
+    const metrics = await fetchGoogleAdsMetrics();
 
     if (!metrics || metrics.length === 0) {
-      return NextResponse.json({
+      return res.status(200).json({
         success: true,
         synced_rows: 0,
         data: [],
       });
     }
 
-    // 4. Initialize Supabase Admin Server Client (bypasses RLS with service role)
+    // 4. Initialize Supabase Server Client (Service role key bypasses RLS)
     const supabase = createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
         persistSession: false,
@@ -79,28 +86,23 @@ export async function GET(req: NextRequest) {
 
     if (error) {
       console.error('Supabase Upsert Error:', error);
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Failed to upsert campaign metrics into Supabase: ' + error.message,
-        },
-        { status: 500 }
-      );
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to upsert campaign metrics into Supabase: ' + error.message,
+      });
     }
 
-    return NextResponse.json({
+    return res.status(200).json({
       success: true,
       synced_rows: recordsToUpsert.length,
       data: data || recordsToUpsert,
     });
   } catch (error: any) {
     console.error('Google Ads Sync Cron Error:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || 'Internal server error while syncing Google Ads metrics',
-      },
-      { status: 500 }
-    );
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Internal server error while syncing Google Ads metrics',
+    });
   }
 }
+
