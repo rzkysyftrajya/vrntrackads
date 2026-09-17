@@ -317,10 +317,13 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         { event: 'INSERT', schema: 'public', table: 'page_views' },
         (payload) => {
           const r = payload.new as Record<string, unknown>;
-          if ((selectedWebsiteId && r.website_id === selectedWebsiteId) || r.tracking_key === trackingKey || r.user_id === profile?.user_id) {
+          const belongsToSelectedWebsite = selectedWebsiteId
+            ? r.website_id === selectedWebsiteId
+            : r.tracking_key === trackingKey;
+          if (belongsToSelectedWebsite) {
             const item: LiveFeedItem = {
               id: String(r.id || ''),
-              type: 'impression',
+              type: 'page_view',
               country: String(r.country || 'Indonesia'),
               city: String(r.city || 'Jakarta'),
               device: String(r.device || 'Mobile'),
@@ -373,7 +376,10 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         { event: 'INSERT', schema: 'public', table: 'clicks' },
         (payload) => {
           const r = payload.new as Record<string, unknown>;
-          if ((selectedWebsiteId && r.website_id === selectedWebsiteId) || r.tracking_key === trackingKey || r.user_id === profile?.user_id) {
+          const belongsToSelectedWebsite = selectedWebsiteId
+            ? r.website_id === selectedWebsiteId
+            : r.tracking_key === trackingKey;
+          if (belongsToSelectedWebsite) {
             const item: LiveFeedItem = {
               id: String(r.id || ''),
               type: 'click',

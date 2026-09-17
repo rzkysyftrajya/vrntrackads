@@ -10,7 +10,6 @@
   var scriptEl = document.currentScript || document.querySelector('script[data-tracking-id], script[data-tracking-key], script[src*="track.js"]');
   var trackingKey = scriptEl ? (scriptEl.getAttribute('data-tracking-id') || scriptEl.getAttribute('data-tracking-key')) : null;
 
-  var supabaseEdgeUrl = 'https://qtgbuacxiuntczeaqlqi.supabase.co/functions/v1/track';
   var endpoint = scriptEl ? scriptEl.getAttribute('data-endpoint') : null;
   
   if (!endpoint) {
@@ -46,6 +45,19 @@
     if (/Firefox\//i.test(ua)) return 'Firefox';
     if (/Safari\//i.test(ua)) return 'Safari';
     return 'Unknown';
+  }
+
+  function getSessionId() {
+    var key = 'vrn_session_id';
+    try {
+      var existing = sessionStorage.getItem(key);
+      if (existing) return existing;
+      var generated = 'sess_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem(key, generated);
+      return generated;
+    } catch (_) {
+      return '';
+    }
   }
 
   function sendBeaconOrXHR(url, body, onFail) {
@@ -93,7 +105,9 @@
         tracking_key: activeKey,
         event: event,
         landing_page: window.location.href,
+        page_url: window.location.href,
         referrer: document.referrer || '',
+        session_id: getSessionId(),
         device: detectDevice(),
         browser: detectBrowser(),
         gclid: getParam('gclid'),
@@ -110,49 +124,31 @@
       var data = Object.assign({}, payload, extra || {});
       var body = JSON.stringify(data);
 
-      var targetUrls = [endpoint, supabaseEdgeUrl];
-      if (endpoint === supabaseEdgeUrl) targetUrls = [supabaseEdgeUrl];
-
-      function tryNext(index) {
-        if (index >= targetUrls.length) return;
-        var targetUrl = targetUrls[index];
-
-        try {
-          if (window.fetch) {
-            window.fetch(targetUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: body,
-              keepalive: true,
-            }).then(function (res) {
-              if (!res.ok && index + 1 < targetUrls.length) {
-                tryNext(index + 1);
-              }
-            }).catch(function () {
-              sendBeaconOrXHR(targetUrl, body, function () {
-                if (index + 1 < targetUrls.length) tryNext(index + 1);
-              });
-            });
-          } else {
-            sendBeaconOrXHR(targetUrl, body, function () {
-              if (index + 1 < targetUrls.length) tryNext(index + 1);
-            });
-          }
-        } catch (_) {
-          if (index + 1 < targetUrls.length) tryNext(index + 1);
+      try {
+        if (window.fetch) {
+          window.fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: body,
+            keepalive: true,
+          }).catch(function () {
+            sendBeaconOrXHR(endpoint, body);
+          });
+        } else {
+          sendBeaconOrXHR(endpoint, body);
         }
+      } catch (_) {
+        sendBeaconOrXHR(endpoint, body);
       }
-
-      tryNext(0);
     },
 
     trackImpression: function () {
       var activeKey = this.tracking_key || trackingKey;
-      var IMPRESSION_KEY = 'vrn_pageview_sent_' + (activeKey || 'default');
+      var pageViewKey = 'vrn_pageview_sent_' + (activeKey || 'default') + '_' + window.location.href;
 
       try {
-        if (sessionStorage.getItem(IMPRESSION_KEY)) return; // Cegah duplikat per sesi browser
-        sessionStorage.setItem(IMPRESSION_KEY, '1');
+        if (sessionStorage.getItem(pageViewKey)) return;
+        sessionStorage.setItem(pageViewKey, '1');
       } catch (_) { /* Jika private mode/disabled, tetap jalankan */ }
 
       this.sendEvent('page_view');
