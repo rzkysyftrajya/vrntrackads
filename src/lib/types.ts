@@ -1,3 +1,5 @@
+export type DateFilter = 'today' | 'yesterday' | '7days' | 'custom';
+
 export interface Profile {
   id: string;
   user_id: string;

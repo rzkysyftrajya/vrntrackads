@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
-import type { TimelinePoint, LiveFeedItem } from '@/lib/types';
+import type { TimelinePoint, LiveFeedItem, DateFilter } from '@/lib/types';
 import type { PageId } from '@/components/Layout';
 import {
   Eye,
@@ -23,7 +23,105 @@ import {
   Tag,
   Monitor,
   Terminal,
+  Calendar,
+  ChevronDown,
 } from 'lucide-react';
+
+export type { DateFilter };
+
+export interface DateRangeBounds {
+  start: Date;
+  end: Date;
+  startIso: string;
+  endIso: string;
+}
+
+export function getDateRangeBounds(
+  filter: DateFilter,
+  customStart?: string,
+  customEnd?: string
+): DateRangeBounds {
+  const now = new Date();
+
+  if (filter === 'today') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    return {
+      start,
+      end,
+      startIso: start.toISOString(),
+      endIso: end.toISOString(),
+    };
+  }
+
+  if (filter === 'yesterday') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
+    return {
+      start,
+      end,
+      startIso: start.toISOString(),
+      endIso: end.toISOString(),
+    };
+  }
+
+  if (filter === '7days') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    return {
+      start,
+      end,
+      startIso: start.toISOString(),
+      endIso: end.toISOString(),
+    };
+  }
+
+  // 'custom'
+  let start: Date;
+  let end: Date;
+
+  if (customStart) {
+    const [sY, sM, sD] = customStart.split('-').map(Number);
+    start = new Date(sY, (sM || 1) - 1, sD || 1, 0, 0, 0, 0);
+  } else {
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0);
+  }
+
+  if (customEnd) {
+    const [eY, eM, eD] = customEnd.split('-').map(Number);
+    end = new Date(eY, (eM || 1) - 1, eD || 1, 23, 59, 59, 999);
+  } else {
+    end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  }
+
+  return {
+    start,
+    end,
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  };
+}
+
+export function formatDisplayDateRange(start: Date, end: Date, filter: DateFilter): string {
+  const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
+  if (filter === 'today') {
+    return `Hari ini (${start.toLocaleDateString('id-ID', options)})`;
+  }
+  if (filter === 'yesterday') {
+    return `Kemarin (${start.toLocaleDateString('id-ID', options)})`;
+  }
+  return `${start.toLocaleDateString('id-ID', options)} — ${end.toLocaleDateString('id-ID', options)}`;
+}
+
+export function formatTimelineLabel(dateStr: string): string {
+  if (dateStr.includes(':')) {
+    return dateStr;
+  }
+  if (dateStr.length >= 10) {
+    return dateStr.slice(5);
+  }
+  return dateStr;
+}
 
 interface DashboardStats {
   totalImpressions: number;
@@ -52,6 +150,17 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
   const [chartReady, setChartReady] = useState(false);
   const chartAnimKey = useRef(0);
 
+  // Date Range Filter State ('today', 'yesterday', '7days', 'custom')
+  const [dateFilter, setDateFilter] = useState<DateFilter>('today');
+  const [customStartDate, setCustomStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 6);
+    return d.toISOString().slice(0, 10);
+  });
+  const [customEndDate, setCustomEndDate] = useState(() => {
+    return new Date().toISOString().slice(0, 10);
+  });
+
   const trackingKey = profile?.tracking_key || profile?.user_id;
 
   const loadData = useCallback(async () => {
@@ -61,21 +170,58 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
     }
 
     try {
-      // 1. Fetch impressions from Supabase
-      const { data: impressions, error: impErr } = await supabase
+      setLoading(true);
+      const bounds = getDateRangeBounds(dateFilter, customStartDate, customEndDate);
+
+      // 1. Fetch impressions from Supabase filtered by timestamp ('created_at') using .gte() and .lte() ISO date strings
+      let impQuery = supabase
         .from('impressions')
         .select('*')
         .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
+        .gte('created_at', bounds.startIso)
+        .lte('created_at', bounds.endIso)
         .order('created_at', { ascending: false })
-        .limit(100);
+        .limit(500);
 
-      // 2. Fetch clicks from Supabase
-      const { data: clicks, error: clkErr } = await supabase
+      // 2. Fetch clicks from Supabase filtered by timestamp ('created_at') using .gte() and .lte() ISO date strings
+      let clkQuery = supabase
         .from('clicks')
         .select('*')
         .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
+        .gte('created_at', bounds.startIso)
+        .lte('created_at', bounds.endIso)
         .order('created_at', { ascending: false })
-        .limit(100);
+        .limit(500);
+
+      let [{ data: impressions, error: impErr }, { data: clicks, error: clkErr }] =
+        await Promise.all([impQuery, clkQuery]);
+
+      // Fallback: in case Supabase schema uses 'timestamp' column name instead of 'created_at'
+      if (impErr && (impErr.message?.includes('created_at') || (impErr as any).code === '42703')) {
+        const fallbackImp = await supabase
+          .from('impressions')
+          .select('*')
+          .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
+          .gte('timestamp', bounds.startIso)
+          .lte('timestamp', bounds.endIso)
+          .order('timestamp', { ascending: false })
+          .limit(500);
+        impressions = fallbackImp.data;
+        impErr = fallbackImp.error;
+      }
+
+      if (clkErr && (clkErr.message?.includes('created_at') || (clkErr as any).code === '42703')) {
+        const fallbackClk = await supabase
+          .from('clicks')
+          .select('*')
+          .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
+          .gte('timestamp', bounds.startIso)
+          .lte('timestamp', bounds.endIso)
+          .order('timestamp', { ascending: false })
+          .limit(500);
+        clicks = fallbackClk.data;
+        clkErr = fallbackClk.error;
+      }
 
       if (impErr) console.warn('Impressions fetch error:', impErr.message);
       if (clkErr) console.warn('Clicks fetch error:', clkErr.message);
@@ -93,25 +239,71 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         integrationStatus: profile?.apps_script_url ? 'Connected' : 'Disconnected',
       });
 
-      // Build 7-day timeline from real data
+      // Build timeline from real data according to selected date filter
       const days: Record<string, { impressions: number; clicks: number }> = {};
-      const now = new Date();
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date(now);
-        d.setDate(d.getDate() - i);
-        const key = d.toISOString().slice(0, 10);
-        days[key] = { impressions: 0, clicks: 0 };
+      const isSingleDay =
+        dateFilter === 'today' ||
+        dateFilter === 'yesterday' ||
+        bounds.start.toISOString().slice(0, 10) === bounds.end.toISOString().slice(0, 10);
+
+      if (isSingleDay) {
+        // Hourly buckets (3-hour intervals: 00:00, 03:00, ..., 21:00)
+        for (let h = 0; h < 24; h += 3) {
+          const slot = `${String(h).padStart(2, '0')}:00`;
+          days[slot] = { impressions: 0, clicks: 0 };
+        }
+
+        impList.forEach((r: any) => {
+          const rawDate = r.created_at || r.timestamp;
+          if (rawDate) {
+            const d = new Date(rawDate);
+            if (!isNaN(d.getTime())) {
+              const h = Math.floor(d.getHours() / 3) * 3;
+              const slot = `${String(h).padStart(2, '0')}:00`;
+              if (days[slot]) days[slot].impressions++;
+            }
+          }
+        });
+
+        clkList.forEach((r: any) => {
+          const rawDate = r.created_at || r.timestamp;
+          if (rawDate) {
+            const d = new Date(rawDate);
+            if (!isNaN(d.getTime())) {
+              const h = Math.floor(d.getHours() / 3) * 3;
+              const slot = `${String(h).padStart(2, '0')}:00`;
+              if (days[slot]) days[slot].clicks++;
+            }
+          }
+        });
+      } else {
+        // Daily buckets
+        const startDay = new Date(bounds.start);
+        startDay.setHours(0, 0, 0, 0);
+        const endDay = new Date(bounds.end);
+        endDay.setHours(0, 0, 0, 0);
+
+        const cur = new Date(startDay);
+        let count = 0;
+        while (cur <= endDay && count < 31) {
+          const key = cur.toISOString().slice(0, 10);
+          days[key] = { impressions: 0, clicks: 0 };
+          cur.setDate(cur.getDate() + 1);
+          count++;
+        }
+
+        impList.forEach((r: any) => {
+          const rawDate = r.created_at || r.timestamp || '';
+          const key = rawDate.slice(0, 10);
+          if (days[key]) days[key].impressions++;
+        });
+
+        clkList.forEach((r: any) => {
+          const rawDate = r.created_at || r.timestamp || '';
+          const key = rawDate.slice(0, 10);
+          if (days[key]) days[key].clicks++;
+        });
       }
-
-      impList.forEach((r) => {
-        const key = (r.created_at || '').slice(0, 10);
-        if (days[key]) days[key].impressions++;
-      });
-
-      clkList.forEach((r) => {
-        const key = (r.created_at || '').slice(0, 10);
-        if (days[key]) days[key].clicks++;
-      });
 
       const newTimeline = Object.entries(days).map(([date, v]) => ({ date, ...v }));
       chartAnimKey.current += 1;
@@ -126,7 +318,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
 
       // Combine feed items
       const combinedFeed: LiveFeedItem[] = [
-        ...impList.map((r) => ({
+        ...impList.map((r: any) => ({
           id: r.id,
           type: 'impression' as const,
           country: r.country || 'Indonesia',
@@ -135,10 +327,10 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           browser: r.browser || 'Chrome',
           ip_address: r.ip_address || '180.252.10.4',
           landing_page: r.landing_page || '/',
-          created_at: r.created_at,
+          created_at: r.created_at || r.timestamp || new Date().toISOString(),
           forwarding_status: isForwarding ? 'Sent to Apps Script' : 'Disabled',
         })),
-        ...clkList.map((r) => ({
+        ...clkList.map((r: any) => ({
           id: r.id,
           type: 'click' as const,
           country: r.country || 'Indonesia',
@@ -150,7 +342,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           utm_source: r.utm_source,
           keyword: r.keyword,
           landing_page: r.landing_page || '/',
-          created_at: r.created_at,
+          created_at: r.created_at || r.timestamp || new Date().toISOString(),
           forwarding_status: isForwarding ? 'Sent to Apps Script' : 'Disabled',
         })),
       ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -161,7 +353,16 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
     } finally {
       setLoading(false);
     }
-  }, [profile?.user_id, profile?.tracking_key, profile?.apps_script_url, profile?.forwarding_active, trackingKey]);
+  }, [
+    profile?.user_id,
+    profile?.tracking_key,
+    profile?.apps_script_url,
+    profile?.forwarding_active,
+    trackingKey,
+    dateFilter,
+    customStartDate,
+    customEndDate,
+  ]);
 
   useEffect(() => {
     loadData();
@@ -188,7 +389,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               browser: r.browser || 'Chrome',
               ip_address: r.ip_address || '180.252.10.4',
               landing_page: r.landing_page || '/',
-              created_at: r.created_at || new Date().toISOString(),
+              created_at: r.created_at || r.timestamp || new Date().toISOString(),
               forwarding_status: profile?.apps_script_url && profile?.forwarding_active ? 'Sent to Apps Script' : 'Disabled',
             };
             setLiveFeed((prev) => [item, ...prev].slice(0, 50));
@@ -200,16 +401,28 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                 ctr: newImp > 0 ? (prev.totalClicks / newImp) * 100 : 0,
               };
             });
-            // Update today's bar in the chart
-            const today = new Date().toISOString().slice(0, 10);
-            setTimeline((prev) =>
-              prev.map((pt) =>
-                pt.date === today ? { ...pt, impressions: pt.impressions + 1 } : pt
-              )
-            );
-            chartAnimKey.current += 1;
-            setChartReady(false);
-            requestAnimationFrame(() => requestAnimationFrame(() => setChartReady(true)));
+
+            // Update chart bar if not yesterday filter
+            if (dateFilter !== 'yesterday') {
+              const now = new Date();
+              const isSingleDay =
+                dateFilter === 'today' ||
+                customStartDate === customEndDate;
+              const currentSlot = `${String(Math.floor(now.getHours() / 3) * 3).padStart(2, '0')}:00`;
+              const todayStr = now.toISOString().slice(0, 10);
+
+              setTimeline((prev) =>
+                prev.map((pt) => {
+                  if ((isSingleDay && pt.date === currentSlot) || (!isSingleDay && pt.date === todayStr)) {
+                    return { ...pt, impressions: pt.impressions + 1 };
+                  }
+                  return pt;
+                })
+              );
+              chartAnimKey.current += 1;
+              setChartReady(false);
+              requestAnimationFrame(() => requestAnimationFrame(() => setChartReady(true)));
+            }
           }
         }
       )
@@ -235,7 +448,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               utm_source: r.utm_source,
               keyword: r.keyword,
               landing_page: r.landing_page || '/',
-              created_at: r.created_at || new Date().toISOString(),
+              created_at: r.created_at || r.timestamp || new Date().toISOString(),
               forwarding_status: profile?.apps_script_url && profile?.forwarding_active ? 'Sent to Apps Script' : 'Disabled',
             };
             setLiveFeed((prev) => [item, ...prev].slice(0, 50));
@@ -247,16 +460,28 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                 ctr: prev.totalImpressions > 0 ? (newClicks / prev.totalImpressions) * 100 : 0,
               };
             });
-            // Update today's bar in the chart
-            const today = new Date().toISOString().slice(0, 10);
-            setTimeline((prev) =>
-              prev.map((pt) =>
-                pt.date === today ? { ...pt, clicks: pt.clicks + 1 } : pt
-              )
-            );
-            chartAnimKey.current += 1;
-            setChartReady(false);
-            requestAnimationFrame(() => requestAnimationFrame(() => setChartReady(true)));
+
+            // Update chart bar if not yesterday filter
+            if (dateFilter !== 'yesterday') {
+              const now = new Date();
+              const isSingleDay =
+                dateFilter === 'today' ||
+                customStartDate === customEndDate;
+              const currentSlot = `${String(Math.floor(now.getHours() / 3) * 3).padStart(2, '0')}:00`;
+              const todayStr = now.toISOString().slice(0, 10);
+
+              setTimeline((prev) =>
+                prev.map((pt) => {
+                  if ((isSingleDay && pt.date === currentSlot) || (!isSingleDay && pt.date === todayStr)) {
+                    return { ...pt, clicks: pt.clicks + 1 };
+                  }
+                  return pt;
+                })
+              );
+              chartAnimKey.current += 1;
+              setChartReady(false);
+              requestAnimationFrame(() => requestAnimationFrame(() => setChartReady(true)));
+            }
           }
         }
       )
@@ -266,7 +491,15 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       supabase.removeChannel(impChannel);
       supabase.removeChannel(clkChannel);
     };
-  }, [trackingKey, profile?.user_id, profile?.apps_script_url, profile?.forwarding_active]);
+  }, [
+    trackingKey,
+    profile?.user_id,
+    profile?.apps_script_url,
+    profile?.forwarding_active,
+    dateFilter,
+    customStartDate,
+    customEndDate,
+  ]);
 
   // Live Simulation Trigger
   async function simulateEvent(eventType: 'impression' | 'click') {
@@ -349,6 +582,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
 
   const maxVal = Math.max(...timeline.map((t) => Math.max(t.impressions, t.clicks)), 1);
   const isEmptyState = !loading && stats.totalImpressions === 0 && stats.totalClicks === 0;
+  const dateRangeBounds = getDateRangeBounds(dateFilter, customStartDate, customEndDate);
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -393,6 +627,78 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         </div>
       </div>
 
+      {/* Date Range Filter Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4 backdrop-blur-xl shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+            <Calendar className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-white">Filter Periode</span>
+              <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                {dateFilter === 'today' && 'Hari Ini'}
+                {dateFilter === 'yesterday' && 'Kemarin'}
+                {dateFilter === '7days' && '7 Hari Terakhir'}
+                {dateFilter === 'custom' && 'Rentang Kustom'}
+              </span>
+            </div>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              {formatDisplayDateRange(dateRangeBounds.start, dateRangeBounds.end, dateFilter)}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* UI Select Dropdown */}
+          <div className="relative">
+            <select
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value as DateFilter)}
+              className="appearance-none rounded-xl border border-white/15 bg-zinc-900/90 pl-3.5 pr-9 py-2 text-xs font-medium text-white shadow-inner hover:border-emerald-500/50 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition cursor-pointer"
+            >
+              <option value="today" className="bg-zinc-900 text-white">Hari Ini (Today)</option>
+              <option value="yesterday" className="bg-zinc-900 text-white">Kemarin (Yesterday)</option>
+              <option value="7days" className="bg-zinc-900 text-white">7 Hari Terakhir (Last 7 Days)</option>
+              <option value="custom" className="bg-zinc-900 text-white">Rentang Kustom (Custom Range)...</option>
+            </select>
+            <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400">
+              <ChevronDown className="h-3.5 w-3.5" />
+            </div>
+          </div>
+
+          {/* Custom Date Pickers (revealed when 'custom' is selected) */}
+          {dateFilter === 'custom' && (
+            <div className="flex items-center gap-2 bg-zinc-950/60 px-2.5 py-1 rounded-xl border border-white/10">
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={(e) => setCustomStartDate(e.target.value)}
+                className="rounded-lg border border-white/10 bg-zinc-900 px-2.5 py-1 text-xs text-white focus:border-emerald-500 focus:outline-none [color-scheme:dark]"
+              />
+              <span className="text-xs text-zinc-400">s/d</span>
+              <input
+                type="date"
+                value={customEndDate}
+                onChange={(e) => setCustomEndDate(e.target.value)}
+                className="rounded-lg border border-white/10 bg-zinc-900 px-2.5 py-1 text-xs text-white focus:border-emerald-500 focus:outline-none [color-scheme:dark]"
+              />
+            </div>
+          )}
+
+          {/* Refresh Button */}
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-white/10 hover:text-white transition disabled:opacity-50"
+            title="Refresh Data"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin text-emerald-400' : ''}`} />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+        </div>
+      </div>
+
       {/* Empty State Banner (Displayed when database has 0 records) */}
       {isEmptyState && (
         <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 backdrop-blur-xl space-y-4">
@@ -401,9 +707,17 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               <ShieldAlert className="h-5 w-5" />
             </div>
             <div className="space-y-1 flex-1">
-              <h3 className="text-sm font-bold text-amber-200">Belum Ada Data Pelacakan (SDK Belum Terdeteksi)</h3>
+              <h3 className="text-sm font-bold text-amber-200">
+                {dateFilter === 'today'
+                  ? 'Belum Ada Traffic Hari Ini'
+                  : dateFilter === 'yesterday'
+                  ? 'Tidak Ada Traffic Pada Hari Kemarin'
+                  : 'Belum Ada Data Pelacakan (SDK Belum Terdeteksi)'}
+              </h3>
               <p className="text-xs text-amber-300/80 leading-relaxed">
-                Landing Page Anda belum mengirimkan event kunjungan atau klik. Silakan salin &amp; pasang tag script SDK VRN TRACK ADS di landing page Anda, atau uji aliran data dengan tombol simulasi di atas.
+                {dateFilter === 'today' || dateFilter === 'yesterday'
+                  ? 'Belum ada kunjungan atau klik CTA yang tercatat pada rentang waktu ini. Silakan ganti rentang waktu ke "7 Hari Terakhir" atau coba uji dengan tombol simulasi di atas.'
+                  : 'Landing Page Anda belum mengirimkan event kunjungan atau klik. Silakan salin & pasang tag script SDK VRN TRACK ADS di landing page Anda, atau uji aliran data dengan tombol simulasi di atas.'}
               </p>
             </div>
           </div>
@@ -459,8 +773,17 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl">
         <div className="mb-6 flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-white">Grafik Performa Traffic (7 Hari Terakhir)</h3>
-            <p className="text-xs text-zinc-400">Volume kunjungan vs klik CTA pengunjung</p>
+            <h3 className="text-sm font-semibold text-white">
+              {dateFilter === 'today' && 'Grafik Performa Traffic (Hari Ini)'}
+              {dateFilter === 'yesterday' && 'Grafik Performa Traffic (Kemarin)'}
+              {dateFilter === '7days' && 'Grafik Performa Traffic (7 Hari Terakhir)'}
+              {dateFilter === 'custom' && `Grafik Performa Traffic (${customStartDate} s/d ${customEndDate})`}
+            </h3>
+            <p className="text-xs text-zinc-400">
+              {dateFilter === 'today' || dateFilter === 'yesterday'
+                ? 'Volume kunjungan vs klik CTA per interval waktu'
+                : 'Volume kunjungan vs klik CTA pengunjung'}
+            </p>
           </div>
           <div className="flex items-center gap-4 text-xs">
             <span className="flex items-center gap-1.5 text-zinc-400">
@@ -511,7 +834,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                   </span>
                 </div>
               </div>
-              <span className="text-[10px] text-zinc-500">{point.date.slice(5)}</span>
+              <span className="text-[10px] text-zinc-500">{formatTimelineLabel(point.date)}</span>
             </div>
           ))}
         </div>
