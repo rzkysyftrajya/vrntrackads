@@ -73,12 +73,9 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
     return new Date().toISOString().slice(0, 10);
   });
 
-  const trackingKey = profile?.tracking_key || profile?.user_id;
   const activeWebsite = websites.find((site) => site.id === selectedWebsiteId) ?? websites[0] ?? null;
-
-  if (activeWebsite) {
-    // Keep selected website context available for future multi-site UI widgets.
-  }
+  const activeWebsiteId = activeWebsite?.id ?? null;
+  const trackingKey = activeWebsite?.tracking_key || (!websites.length ? profile?.tracking_key || profile?.user_id : null);
 
   useEffect(() => {
     if (!profile?.user_id) {
@@ -121,12 +118,12 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       const bounds = getDateRangeBounds(dateFilter, customStartDate, customEndDate);
 
       const pageViewsTable = 'page_views';
-      const websiteScopedQuery = selectedWebsiteId
-        ? supabase.from(pageViewsTable).select('*').eq('website_id', selectedWebsiteId)
+      const websiteScopedQuery = activeWebsiteId
+        ? supabase.from(pageViewsTable).select('*').eq('website_id', activeWebsiteId)
         : supabase.from(pageViewsTable).select('*').or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`);
 
-      const websiteScopedClickQuery = selectedWebsiteId
-        ? supabase.from('clicks').select('*').eq('website_id', selectedWebsiteId)
+      const websiteScopedClickQuery = activeWebsiteId
+        ? supabase.from('clicks').select('*').eq('website_id', activeWebsiteId)
         : supabase.from('clicks').select('*').or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`);
 
       const impQuery = websiteScopedQuery
@@ -144,40 +141,18 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       let [{ data: impressions, error: impErr }, { data: clicks, error: clkErr }] =
         await Promise.all([impQuery, clkQuery]);
 
-      // Keep the dashboard visible when the selected website context is stale
-      // or the event was created with the legacy profile tracking key.
-      if (selectedWebsiteId && !impErr && !(impressions?.length)) {
-        const fallbackImp = await supabase.from(pageViewsTable).select('*')
-          .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
-          .gte('created_at', bounds.startIso)
-          .lte('created_at', bounds.endIso)
-          .order('created_at', { ascending: false })
-          .limit(500);
-        if (fallbackImp.data?.length) impressions = fallbackImp.data;
-      }
-
-      if (selectedWebsiteId && !clkErr && !(clicks?.length)) {
-        const fallbackClk = await supabase.from('clicks').select('*')
-          .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
-          .gte('created_at', bounds.startIso)
-          .lte('created_at', bounds.endIso)
-          .order('created_at', { ascending: false })
-          .limit(500);
-        if (fallbackClk.data?.length) clicks = fallbackClk.data;
-      }
-
       // Fallback: in case Supabase schema uses 'timestamp' column name instead of 'created_at'
       if (impErr && (impErr.message?.includes('page_views') || impErr.message?.includes('impressions') || impErr.message?.includes('created_at') || (impErr as { code?: string }).code === '42703' || (impErr as { code?: string }).code === '42P01')) {
-        const fallbackImp = selectedWebsiteId
-          ? await supabase.from('impressions').select('*').eq('website_id', selectedWebsiteId).gte('timestamp', bounds.startIso).lte('timestamp', bounds.endIso).order('timestamp', { ascending: false }).limit(500)
+        const fallbackImp = activeWebsiteId
+          ? await supabase.from('impressions').select('*').eq('website_id', activeWebsiteId).gte('timestamp', bounds.startIso).lte('timestamp', bounds.endIso).order('timestamp', { ascending: false }).limit(500)
           : await supabase.from('impressions').select('*').or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`).gte('timestamp', bounds.startIso).lte('timestamp', bounds.endIso).order('timestamp', { ascending: false }).limit(500);
         impressions = fallbackImp.data;
         impErr = fallbackImp.error;
       }
 
       if (clkErr && (clkErr.message?.includes('created_at') || (clkErr as { code?: string }).code === '42703')) {
-        const fallbackClk = selectedWebsiteId
-          ? await supabase.from('clicks').select('*').eq('website_id', selectedWebsiteId).gte('timestamp', bounds.startIso).lte('timestamp', bounds.endIso).order('timestamp', { ascending: false }).limit(500)
+        const fallbackClk = activeWebsiteId
+          ? await supabase.from('clicks').select('*').eq('website_id', activeWebsiteId).gte('timestamp', bounds.startIso).lte('timestamp', bounds.endIso).order('timestamp', { ascending: false }).limit(500)
           : await supabase.from('clicks').select('*').or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`).gte('timestamp', bounds.startIso).lte('timestamp', bounds.endIso).order('timestamp', { ascending: false }).limit(500);
         clicks = fallbackClk.data;
         clkErr = fallbackClk.error;
@@ -318,7 +293,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
     profile?.apps_script_url,
     profile?.forwarding_active,
     trackingKey,
-    selectedWebsiteId,
+    activeWebsiteId,
     dateFilter,
     customStartDate,
     customEndDate,
@@ -339,8 +314,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         { event: 'INSERT', schema: 'public', table: 'page_views' },
         (payload) => {
           const r = payload.new as Record<string, unknown>;
-          const belongsToSelectedWebsite = selectedWebsiteId
-            ? r.website_id === selectedWebsiteId
+          const belongsToSelectedWebsite = activeWebsiteId
+            ? r.website_id === activeWebsiteId
             : r.tracking_key === trackingKey;
           if (belongsToSelectedWebsite) {
             const item: LiveFeedItem = {
@@ -398,8 +373,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         { event: 'INSERT', schema: 'public', table: 'clicks' },
         (payload) => {
           const r = payload.new as Record<string, unknown>;
-          const belongsToSelectedWebsite = selectedWebsiteId
-            ? r.website_id === selectedWebsiteId
+          const belongsToSelectedWebsite = activeWebsiteId
+            ? r.website_id === activeWebsiteId
             : r.tracking_key === trackingKey;
           if (belongsToSelectedWebsite) {
             const item: LiveFeedItem = {
@@ -462,7 +437,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
     profile?.user_id,
     profile?.apps_script_url,
     profile?.forwarding_active,
-    selectedWebsiteId,
+    activeWebsiteId,
     dateFilter,
     customStartDate,
     customEndDate,

@@ -407,6 +407,30 @@ function doPost(e) {
         </div>
       </div>
 
+      {/* Website Installation Guide */}
+      <section className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-6 shadow-lg">
+        <div className="mb-3 flex items-center gap-2">
+          <HelpCircle className="h-4 w-4 text-cyan-300" />
+          <h3 className="text-sm font-semibold text-white">Cara Memasang Tracking ke Website Lain</h3>
+        </div>
+        <ol className="list-decimal space-y-2 pl-5 text-xs leading-relaxed text-zinc-300">
+          <li>Isi nama dan domain website pada <strong>Website Manager</strong>, lalu klik <strong>Tambah Website</strong>.</li>
+          <li>Pilih website tersebut dari daftar. Setiap website memiliki <strong>Tracking Key</strong> yang berbeda.</li>
+          <li>Salin <strong>SDK Script Tag</strong> di bawah, lalu tempel satu kali di tag <code className="text-cyan-200">&lt;head&gt;</code> atau sebelum <code className="text-cyan-200">&lt;/body&gt;</code> website tujuan.</li>
+          <li>Untuk tombol WhatsApp, telepon, atau CTA custom, gunakan link normal atau atribut <code className="text-cyan-200">data-vrn-click</code>. SDK akan mengirim page view dan click otomatis.</li>
+          <li>Deploy/publish website tujuan, buka halamannya, lalu cek Network browser. Harus ada <code className="text-cyan-200">POST /api/public/track</code> dengan status <strong>200</strong>.</li>
+          <li>Refresh dashboard VRN Track Ads. Data akan muncul pada website yang dipilih dan tersimpan di Supabase.</li>
+        </ol>
+        <div className="mt-4 rounded-lg border border-white/10 bg-zinc-950/60 p-3 text-[11px] leading-relaxed text-zinc-400">
+          <strong className="text-cyan-200">Contoh CTA:</strong>
+          <pre className="mt-2 overflow-x-auto font-mono text-cyan-100">{`<a href="https://wa.me/6281234567890">Chat WhatsApp</a>
+<button data-vrn-click="form_konsultasi">Konsultasi</button>`}</pre>
+        </div>
+        <p className="mt-3 text-[11px] leading-relaxed text-amber-200/80">
+          Catatan: lokasi berbasis IP adalah perkiraan. Jaringan seluler, VPN, dan proxy dapat membuat kota berbeda dari lokasi fisik pengguna.
+        </p>
+      </section>
+
       {/* Website Manager Card */}
       <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl shadow-lg">
         <div className="mb-4 flex items-center justify-between">

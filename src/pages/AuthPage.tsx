@@ -1,16 +1,15 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Mail, Lock, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Mail, Lock, Loader2, CheckCircle2 } from 'lucide-react';
 
 export default function AuthPage() {
-  const { signIn, signUp, quickDemoLogin } = useAuth();
+  const { signIn, signUp } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [demoLoading, setDemoLoading] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -22,17 +21,6 @@ export default function AuthPage() {
     const res = await fn(email, password);
 
     setLoading(false);
-    if (res.error) {
-      setError(res.error);
-    }
-  }
-
-  async function handleDemoLogin() {
-    setError(null);
-    setSuccessMsg(null);
-    setDemoLoading(true);
-    const res = await quickDemoLogin();
-    setDemoLoading(false);
     if (res.error) {
       setError(res.error);
     }
@@ -137,7 +125,7 @@ export default function AuthPage() {
 
             <button
               type="submit"
-              disabled={loading || demoLoading}
+              disabled={loading}
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-50"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -145,26 +133,6 @@ export default function AuthPage() {
             </button>
           </form>
 
-          {/* Quick Demo Access Divider */}
-          <div className="my-5 flex items-center gap-3">
-            <div className="h-[1px] flex-1 bg-white/10" />
-            <span className="text-[11px] uppercase tracking-wider text-zinc-500">or quick access</span>
-            <div className="h-[1px] flex-1 bg-white/10" />
-          </div>
-
-          <button
-            type="button"
-            onClick={handleDemoLogin}
-            disabled={loading || demoLoading}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 py-2.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-50"
-          >
-            {demoLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4 text-emerald-400" />
-            )}
-            Instant Demo Login (1-Click)
-          </button>
         </div>
 
         <p className="mt-6 text-center text-[11px] text-zinc-500">

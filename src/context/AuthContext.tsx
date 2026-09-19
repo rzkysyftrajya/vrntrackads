@@ -10,7 +10,6 @@ interface AuthContextValue {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signUp: (email: string, password: string) => Promise<{ error: string | null }>;
-  quickDemoLogin: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -196,7 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error.message.toLowerCase().includes('rate limit')) {
           return {
             error:
-              'Email rate limit Supabase terlampaui. Silakan gunakan tombol "Demo / Quick Access" di bawah atau coba Login langsung.',
+              'Email rate limit Supabase terlampaui. Silakan tunggu beberapa saat lalu coba lagi.',
           };
         }
         return { error: error.message };
@@ -220,12 +219,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function quickDemoLogin() {
-    const demoEmail = 'demo@vrntrackads.com';
-    const demoPassword = 'demo-password-2026';
-    return await signUp(demoEmail, demoPassword);
-  }
-
   async function signOut() {
     await supabase.auth.signOut();
     setProfile(null);
@@ -240,7 +233,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         signIn,
         signUp,
-        quickDemoLogin,
         signOut,
         refreshProfile,
       }}
