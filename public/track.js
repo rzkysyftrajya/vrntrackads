@@ -14,10 +14,37 @@
     return;
   }
 
+  // Helper to sanitize/clean URL and remove extraneous markdown brackets/characters
+  function sanitizeString(str) {
+    if (!str || typeof str !== 'string') return '';
+    return str.split(']')[0].replace(/[\[\]\(\)]/g, '').trim();
+  }
+
+  function getCleanUrl() {
+    try {
+      var href = window.location.href || '';
+      return sanitizeString(href);
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function getCleanQueryParam(paramName) {
+    try {
+      var searchStr = window.location.search || '';
+      var cleanSearch = searchStr.split(']')[0].replace(/[\[\]\(\)]/g, '');
+      var params = new URLSearchParams(cleanSearch);
+      var val = params.get(paramName);
+      return val ? sanitizeString(val) : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
   var endpoint = (script && script.src
     ? new URL(script.src).origin
     : window.location.origin) + '/api/public/track';
-  var urlParams = new URLSearchParams(window.location.search);
+
   var sessionId;
   var startTime = Date.now();
   var hasMoved = false;
@@ -180,6 +207,8 @@
     updateScrollDepth();
 
     var timeOnPage = Math.max(0, Math.round((Date.now() - startTime) / 1000));
+    var cleanCurrentUrl = getCleanUrl();
+    var cleanReferrer = sanitizeString(document.referrer || '');
 
     getFingerprint(hw).then(function (fingerprint) {
       var payload = Object.assign({
@@ -196,15 +225,15 @@
         has_moved: hasMoved,
         scroll_depth: maxScrollDepth,
         time_on_page: timeOnPage,
-        page_url: window.location.href,
-        referrer: document.referrer || '',
-        gclid: urlParams.get('gclid') || '',
-        utm_source: urlParams.get('utm_source') || '',
-        utm_medium: urlParams.get('utm_medium') || '',
-        utm_campaign: urlParams.get('utm_campaign') || '',
-        utm_content: urlParams.get('utm_content') || '',
-        utm_term: urlParams.get('utm_term') || '',
-        keyword: urlParams.get('keyword') || urlParams.get('utm_term') || '',
+        page_url: cleanCurrentUrl,
+        referrer: cleanReferrer,
+        gclid: getCleanQueryParam('gclid'),
+        utm_source: getCleanQueryParam('utm_source'),
+        utm_medium: getCleanQueryParam('utm_medium'),
+        utm_campaign: getCleanQueryParam('utm_campaign'),
+        utm_content: getCleanQueryParam('utm_content'),
+        utm_term: getCleanQueryParam('utm_term'),
+        keyword: getCleanQueryParam('keyword') || getCleanQueryParam('utm_term'),
         user_agent: navigator.userAgent || '',
         is_bot: isBot()
       }, extraData || {});
@@ -248,21 +277,26 @@
   };
 
   function captureClick(event) {
-    var target = event.target;
+    // 1. TINGKAT PALING ATAS: Langsung cek dan kunci cooldown timestamp sebelum pemrosesan apa pun
+    var now = Date.now();
+    if (now - lastClickTimestamp < CLICK_COOLDOWN_MS) {
+      return;
+    }
+
+    var target = event && event.target;
     if (!target || !target.closest) return;
 
     var element = target.closest('[data-vrn-click], a[href^="https://wa.me/"], a[href^="https://api.whatsapp.com/"], a[href^="tel:"]');
     if (!element) return;
 
-    var now = Date.now();
-    // Debounce / cooldown 2000ms sebelum memproses event klik
-    if (now - lastClickTimestamp < CLICK_COOLDOWN_MS) {
-      return;
-    }
+    // Kunci timestamp segera setelah tombol valid ditemukan
+    lastClickTimestamp = now;
 
-    trackClick({
-      click_target: element.getAttribute('data-vrn-click') || element.getAttribute('href') || element.tagName.toLowerCase(),
-      landing_page: window.location.href
+    var targetAttr = element.getAttribute('data-vrn-click') || element.getAttribute('href') || element.tagName.toLowerCase();
+
+    sendEvent('click', {
+      click_target: sanitizeString(targetAttr),
+      landing_page: getCleanUrl()
     });
   }
 
