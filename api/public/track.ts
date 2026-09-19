@@ -61,6 +61,14 @@ export default async function handler(req: any, res: any) {
       landing_page,
       referrer,
       session_id,
+      fingerprint,
+      screen_resolution,
+      cpu_cores,
+      device_memory,
+      gpu_renderer,
+      timezone,
+      language,
+      is_bot,
       gclid,
       utm_source,
       utm_medium,
@@ -76,21 +84,27 @@ export default async function handler(req: any, res: any) {
     // Resolve the key against the current multi-site table first.
     const { data: website } = await supabase
       .from('websites')
-      .select('id, user_id')
+      .select('id, user_id, apps_script_url, forwarding_active')
       .eq('tracking_key', tracking_key)
       .maybeSingle();
 
     let websiteId = website?.id || null;
     let userId = website?.user_id || null;
+    let appsScriptUrl = website?.apps_script_url || null;
+    let forwardingActive = website?.forwarding_active ?? true;
 
     if (!websiteId) {
       const { data: profile } = await supabase
         .from('profiles')
-        .select('id, user_id')
+        .select('id, user_id, apps_script_url, forwarding_active')
         .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
         .maybeSingle();
 
       userId = profile?.user_id || profile?.id || null;
+      if (profile) {
+        appsScriptUrl = profile.apps_script_url || null;
+        forwardingActive = profile.forwarding_active ?? true;
+      }
     }
 
     if (!userId) {
@@ -108,6 +122,30 @@ export default async function handler(req: any, res: any) {
     const requestUserAgent = user_agent || req.headers['user-agent'] || '';
     const { device, browser } = parseUserAgent(requestUserAgent);
 
+    // Anti-refresh deduplication (within 1 hour)
+    let isDuplicate = false;
+    if ((!event || event === 'page_view' || event === 'impression') && fingerprint) {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const { data: existingView } = await supabase
+        .from('page_views')
+        .select('id')
+        .eq('tracking_key', tracking_key)
+        .eq('fingerprint', fingerprint)
+        .gte('created_at', oneHourAgo)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingView) {
+        isDuplicate = true;
+      }
+    }
+
+    const eventStatus = is_bot
+      ? 'BOT_FILTERED'
+      : isDuplicate
+        ? 'DUPLICATE'
+        : 'OK';
+
     const commonPayload = {
       tracking_key: tracking_key,
       website_id: websiteId,
@@ -115,13 +153,22 @@ export default async function handler(req: any, res: any) {
       landing_page: page_url || landing_page || '',
       referrer: referrer || null,
       session_id: session_id || null,
+      fingerprint: fingerprint || null,
+      screen_resolution: screen_resolution || null,
+      cpu_cores: typeof cpu_cores === 'number' ? cpu_cores : (cpu_cores ? parseInt(cpu_cores, 10) : null),
+      device_memory: typeof device_memory === 'number' ? device_memory : (device_memory ? parseFloat(device_memory) : null),
+      gpu_renderer: gpu_renderer || null,
+      timezone: timezone || null,
+      language: language || null,
+      is_duplicate: isDuplicate,
       ip_address: ipAddress,
       country,
       city,
       device,
       browser,
       user_agent: requestUserAgent || null,
-      status: 'OK',
+      is_bot: Boolean(is_bot),
+      status: eventStatus,
       created_at: new Date().toISOString()
     };
 
@@ -178,8 +225,34 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({ success: false, supabase_error: insertResult.error.message });
     }
 
+    // Forwarding ke Google Apps Script jika aktif & bukan BOT
+    if (forwardingActive && appsScriptUrl && eventStatus !== 'BOT_FILTERED') {
+      try {
+        const forwardPayload = {
+          event: event || 'page_view',
+          ...commonPayload,
+          gclid: gclid || null,
+          utm_source: utm_source || null,
+          utm_medium: utm_medium || null,
+          utm_campaign: utm_campaign || null,
+          keyword: keyword || null,
+        };
+
+        fetch(appsScriptUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(forwardPayload),
+        }).catch(() => {});
+      } catch (e) {}
+    }
+
     console.log('BERHASIL MASUK SUPABASE!');
-    return res.status(200).json({ success: true, message: 'Data logged successfully' });
+    return res.status(200).json({
+      success: true,
+      message: 'Data logged successfully',
+      status: eventStatus,
+      is_duplicate: isDuplicate
+    });
 
   } catch (err: any) {
     console.error('CRASH API:', err);

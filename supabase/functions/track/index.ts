@@ -42,8 +42,6 @@ function checkRateLimit(key: string): boolean {
 }
 
 // ─── Rapid-click spam detection (per IP, per event type) ────────────────────
-// Jika IP yang sama mengirim event 'click' < 10 detik setelah klik sebelumnya,
-// tandai sebagai SPAM_SUSPECT.
 const SPAM_CLICK_WINDOW_MS = 10 * 1000; // 10 detik
 const lastClickTimestampMap = new Map<string, number>(); // ip → timestamp ms
 
@@ -52,7 +50,6 @@ function checkSpamSuspect(ip: string): boolean {
   const lastTs = lastClickTimestampMap.get(ip);
   lastClickTimestampMap.set(ip, now);
 
-  // Cleanup map agar tidak membengkak
   if (lastClickTimestampMap.size > 5000) {
     const cutoff = now - SPAM_CLICK_WINDOW_MS * 10;
     for (const [k, v] of lastClickTimestampMap.entries()) {
@@ -65,7 +62,6 @@ function checkSpamSuspect(ip: string): boolean {
   }
   return false;
 }
-
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -102,7 +98,21 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { event, tracking_key, session_id, fingerprint, is_bot: clientIsBot, bot_reasons, ...params } = body;
+    const {
+      event,
+      tracking_key,
+      session_id,
+      fingerprint,
+      screen_resolution,
+      cpu_cores,
+      device_memory,
+      gpu_renderer,
+      timezone,
+      language,
+      is_bot: clientIsBot,
+      bot_reasons,
+      ...params
+    } = body;
 
     if (!tracking_key || !event) {
       return jsonResponse({ error: "Missing tracking_key or event" }, 400);
@@ -166,7 +176,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const resolvedUserId = profile.user_id || profile.id;
-    const userAgent = req.headers.get("user-agent") || "";
+    const userAgent = req.headers.get("user-agent") || params.user_agent || "";
     const { device: uaDevice, browser: uaBrowser } = parseUserAgent(userAgent);
 
     // Geo from CF / Vercel headers
@@ -190,11 +200,12 @@ Deno.serve(async (req: Request) => {
     const landingPage =
       params.landing_page ||
       params.landingPage ||
+      params.page_url ||
       (req.headers.get("referer") ?? "");
     const referrer = params.referrer || "";
 
     // -------------------------------------------------------------
-    // ADVANCED BOT & CLICK FRAUD DETECTION
+    // ADVANCED BOT & CLICK FRAUD DETECTION & REFRESH DEDUPLICATION
     // -------------------------------------------------------------
     let isBot = Boolean(clientIsBot);
     const detectionReasons: string[] = Array.isArray(bot_reasons) ? [...bot_reasons] : [];
@@ -218,7 +229,6 @@ Deno.serve(async (req: Request) => {
     const gclid = params.gclid ? String(params.gclid).trim() : null;
 
     if (event === "click" && gclid) {
-      // Check if this gclid already exists in clicks for this user/tracking key in last 24h
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const { data: existingClick } = await supabase
         .from("clicks")
@@ -235,7 +245,26 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // 4. Rapid-click Spam Detection (per IP, < 10 detik)
+    // 4. Anti-Refresh Deduplication Check (for Page Views)
+    let isDuplicate = false;
+    if ((event === "page_view" || event === "impression") && fingerprint) {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const { data: existingView, error: dupCheckError } = await supabase
+        .from("page_views")
+        .select("id")
+        .eq("tracking_key", tracking_key)
+        .eq("fingerprint", fingerprint)
+        .gte("created_at", oneHourAgo)
+        .limit(1)
+        .maybeSingle();
+
+      if (!dupCheckError && existingView) {
+        isDuplicate = true;
+        detectionReasons.push("duplicate_refresh_1h");
+      }
+    }
+
+    // 5. Rapid-click Spam Detection (per IP, < 10 detik)
     let isSpamSuspect = false;
     if (event === "click" && !isBot) {
       isSpamSuspect = checkSpamSuspect(ip);
@@ -247,9 +276,11 @@ Deno.serve(async (req: Request) => {
     // Tentukan status akhir event
     const eventStatus = isBot || isDuplicateGclid
       ? "BOT_FILTERED"
-      : isSpamSuspect
-        ? "SPAM_SUSPECT"
-        : "OK";
+      : isDuplicate
+        ? "DUPLICATE"
+        : isSpamSuspect
+          ? "SPAM_SUSPECT"
+          : "OK";
 
     const commonFields = {
       website_id: profile.id,
@@ -266,7 +297,21 @@ Deno.serve(async (req: Request) => {
     if (event === "page_view" || event === "impression") {
       const pageViewPayload = {
         ...commonFields,
+        session_id: session_id || null,
+        fingerprint: fingerprint || null,
+        screen_resolution: screen_resolution || null,
+        cpu_cores: typeof cpu_cores === "number" ? cpu_cores : (cpu_cores ? parseInt(cpu_cores, 10) : null),
+        device_memory: typeof device_memory === "number" ? device_memory : (device_memory ? parseFloat(device_memory) : null),
+        gpu_renderer: gpu_renderer || null,
+        timezone: timezone || null,
+        language: language || null,
+        is_duplicate: isDuplicate,
         browser: uaBrowser,
+        user_agent: userAgent || null,
+        is_bot: isBot,
+        bot_reasons: detectionReasons.length > 0 ? detectionReasons.join(",") : null,
+        status: eventStatus,
+        page_url: landingPage,
         referrer,
       };
 
@@ -295,7 +340,7 @@ Deno.serve(async (req: Request) => {
 
     // Forward to Google Apps Script URL
     // BOT_FILTERED → tidak dikirim ke Sheets
-    // SPAM_SUSPECT / OK → dikirim, dengan field status agar Sheets bisa memberi warna
+    // DUPLICATE / SPAM_SUSPECT / OK → dikirim dengan status yang sesuai
     const shouldForwardToSheets =
       profile.forwarding_active !== false &&
       profile.apps_script_url &&
@@ -318,10 +363,17 @@ Deno.serve(async (req: Request) => {
         utm_medium: params.utm_medium || null,
         utm_campaign: params.utm_campaign || null,
         keyword: params.keyword || null,
+        fingerprint: fingerprint || null,
+        screen_resolution: screen_resolution || null,
+        cpu_cores: cpu_cores || null,
+        device_memory: device_memory || null,
+        gpu_renderer: gpu_renderer || null,
+        timezone: timezone || null,
+        language: language || null,
+        is_duplicate: isDuplicate,
         timestamp: new Date().toISOString(),
-        // ── Status anti-spam ──────────────────────────────────────────────
-        status: eventStatus,                          // "OK" | "SPAM_SUSPECT"
-        spam_suspect: isSpamSuspect,                  // true → warna baris MERAH di Sheets
+        status: eventStatus,
+        spam_suspect: isSpamSuspect,
         detection_reasons: detectionReasons.join(",") || null,
         ...params,
       };
@@ -331,7 +383,6 @@ Deno.serve(async (req: Request) => {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 8000);
 
-          // Menggunakan redirect: 'follow' dan text/plain agar tidak diblokir Apps Script CORS / 302
           await fetch(profile.apps_script_url!, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -355,6 +406,7 @@ Deno.serve(async (req: Request) => {
       success: true,
       event,
       status: eventStatus,
+      is_duplicate: isDuplicate,
       spam_suspect: isSpamSuspect,
       filtered_bot: isBot || isDuplicateGclid,
     });

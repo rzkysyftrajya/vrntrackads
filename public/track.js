@@ -32,45 +32,153 @@
     );
   }
 
-  function sendEvent(eventType, extraData) {
-    var payload = Object.assign({
-      event: eventType,
-      tracking_key: trackingKey,
-      session_id: sessionId,
-      page_url: window.location.href,
-      referrer: document.referrer || '',
-      gclid: urlParams.get('gclid') || '',
-      utm_source: urlParams.get('utm_source') || '',
-      utm_medium: urlParams.get('utm_medium') || '',
-      utm_campaign: urlParams.get('utm_campaign') || '',
-      utm_content: urlParams.get('utm_content') || '',
-      utm_term: urlParams.get('utm_term') || '',
-      keyword: urlParams.get('keyword') || urlParams.get('utm_term') || '',
-      user_agent: navigator.userAgent || '',
-      is_bot: isBot()
-    }, extraData || {});
-
-    var body = JSON.stringify(payload);
-    if (navigator.sendBeacon) {
-      try {
-        var sent = navigator.sendBeacon(
-          endpoint,
-          new Blob([body], { type: 'text/plain;charset=UTF-8' })
-        );
-        if (sent) return;
-      } catch (error) {
-        // Fall through to fetch when Beacon is unavailable or rejected.
+  function getGpuRenderer() {
+    try {
+      var canvas = document.createElement('canvas');
+      var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (gl) {
+        var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (debugInfo) {
+          return gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || null;
+        }
       }
-    }
+    } catch (e) {}
+    return null;
+  }
 
-    fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: body,
-      keepalive: true,
-      mode: 'cors',
-      credentials: 'omit'
-    }).catch(function () {});
+  function getHardwareInfo() {
+    var screenRes = (window.screen && window.screen.width && window.screen.height)
+      ? window.screen.width + 'x' + window.screen.height
+      : null;
+    var cpuCores = typeof navigator.hardwareConcurrency === 'number' ? navigator.hardwareConcurrency : null;
+    var deviceMemory = typeof navigator.deviceMemory === 'number' ? navigator.deviceMemory : null;
+    var gpuRenderer = getGpuRenderer();
+    var timezone = null;
+    try {
+      timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+    } catch (e) {}
+    var language = navigator.language || navigator.userLanguage || null;
+
+    return {
+      screen_resolution: screenRes,
+      cpu_cores: cpuCores,
+      device_memory: deviceMemory,
+      gpu_renderer: gpuRenderer,
+      timezone: timezone,
+      language: language
+    };
+  }
+
+  // Fallback hash generator if FingerprintJS CDN is blocked or unavailable
+  function generateFallbackFingerprint(hw) {
+    try {
+      var raw = [
+        navigator.userAgent || '',
+        hw.screen_resolution || '',
+        hw.timezone || '',
+        hw.language || '',
+        hw.cpu_cores || '',
+        hw.device_memory || '',
+        hw.gpu_renderer || ''
+      ].join('###');
+
+      var hash = 0;
+      for (var i = 0; i < raw.length; i++) {
+        var char = raw.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash |= 0; // Convert to 32bit integer
+      }
+      return 'fp_' + Math.abs(hash).toString(36);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  var fingerprintPromise = null;
+
+  function getFingerprint(hw) {
+    if (!fingerprintPromise) {
+      fingerprintPromise = new Promise(function (resolve) {
+        var fallback = generateFallbackFingerprint(hw);
+        var timeoutId = setTimeout(function () {
+          resolve(fallback);
+        }, 1500);
+
+        try {
+          import('https://openfpcdn.io/fingerprintjs/v4')
+            .then(function (FingerprintJS) {
+              return FingerprintJS.load();
+            })
+            .then(function (fp) {
+              return fp.get();
+            })
+            .then(function (result) {
+              clearTimeout(timeoutId);
+              resolve(result.visitorId || fallback);
+            })
+            .catch(function () {
+              clearTimeout(timeoutId);
+              resolve(fallback);
+            });
+        } catch (e) {
+          clearTimeout(timeoutId);
+          resolve(fallback);
+        }
+      });
+    }
+    return fingerprintPromise;
+  }
+
+  function sendEvent(eventType, extraData) {
+    var hw = getHardwareInfo();
+
+    getFingerprint(hw).then(function (fingerprint) {
+      var payload = Object.assign({
+        event: eventType,
+        tracking_key: trackingKey,
+        session_id: sessionId,
+        fingerprint: fingerprint,
+        screen_resolution: hw.screen_resolution,
+        cpu_cores: hw.cpu_cores,
+        device_memory: hw.device_memory,
+        gpu_renderer: hw.gpu_renderer,
+        timezone: hw.timezone,
+        language: hw.language,
+        page_url: window.location.href,
+        referrer: document.referrer || '',
+        gclid: urlParams.get('gclid') || '',
+        utm_source: urlParams.get('utm_source') || '',
+        utm_medium: urlParams.get('utm_medium') || '',
+        utm_campaign: urlParams.get('utm_campaign') || '',
+        utm_content: urlParams.get('utm_content') || '',
+        utm_term: urlParams.get('utm_term') || '',
+        keyword: urlParams.get('keyword') || urlParams.get('utm_term') || '',
+        user_agent: navigator.userAgent || '',
+        is_bot: isBot()
+      }, extraData || {});
+
+      var body = JSON.stringify(payload);
+      if (navigator.sendBeacon) {
+        try {
+          var sent = navigator.sendBeacon(
+            endpoint,
+            new Blob([body], { type: 'text/plain;charset=UTF-8' })
+          );
+          if (sent) return;
+        } catch (error) {
+          // Fall through to fetch when Beacon is unavailable or rejected.
+        }
+      }
+
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: body,
+        keepalive: true,
+        mode: 'cors',
+        credentials: 'omit'
+      }).catch(function () {});
+    });
   }
 
   function trackClick(data) {
