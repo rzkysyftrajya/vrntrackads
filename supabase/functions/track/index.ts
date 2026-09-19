@@ -41,21 +41,35 @@ function checkRateLimit(key: string): boolean {
   return true;
 }
 
-// ─── Rapid-click spam detection (per IP, per event type) ────────────────────
+// ─── Rapid-click deduplication & spam detection (per IP / Fingerprint / Session) ────
+// Abaikan klik ganda jika terjadi < 2 detik (2000ms) dari session/fingerprint/IP yang sama
+const CLICK_DEBOUNCE_WINDOW_MS = 2 * 1000; // 2 detik
 const SPAM_CLICK_WINDOW_MS = 10 * 1000; // 10 detik
-const lastClickTimestampMap = new Map<string, number>(); // ip → timestamp ms
+const lastClickTimestampMap = new Map<string, number>();
 
-function checkSpamSuspect(ip: string): boolean {
+function isRapidDuplicateClick(key: string): boolean {
   const now = Date.now();
-  const lastTs = lastClickTimestampMap.get(ip);
-  lastClickTimestampMap.set(ip, now);
-
+  const lastTs = lastClickTimestampMap.get(key);
+  
   if (lastClickTimestampMap.size > 5000) {
     const cutoff = now - SPAM_CLICK_WINDOW_MS * 10;
     for (const [k, v] of lastClickTimestampMap.entries()) {
       if (v < cutoff) lastClickTimestampMap.delete(k);
     }
   }
+
+  if (lastTs !== undefined && now - lastTs < CLICK_DEBOUNCE_WINDOW_MS) {
+    return true; // Terjadi klik beruntun < 2 detik -> DUPLICATE BOUNCE
+  }
+
+  lastClickTimestampMap.set(key, now);
+  return false;
+}
+
+function checkSpamSuspect(ip: string): boolean {
+  const now = Date.now();
+  const lastTs = lastClickTimestampMap.get(`spam_${ip}`);
+  lastClickTimestampMap.set(`spam_${ip}`, now);
 
   if (lastTs !== undefined && now - lastTs < SPAM_CLICK_WINDOW_MS) {
     return true; // SPAM_SUSPECT
@@ -109,6 +123,9 @@ Deno.serve(async (req: Request) => {
       gpu_renderer,
       timezone,
       language,
+      has_moved,
+      scroll_depth,
+      time_on_page,
       is_bot: clientIsBot,
       bot_reasons,
       ...params
@@ -120,6 +137,19 @@ Deno.serve(async (req: Request) => {
 
     if ((event !== "page_view" && event !== "impression") && event !== "click") {
       return jsonResponse({ error: "Invalid event type" }, 400);
+    }
+
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "0.0.0.0";
+
+    // ── Server-side Rapid Click Lock / Cooldown (< 2s) ──────────────────────
+    if (event === "click") {
+      const clickDedupeKey = `clk_${tracking_key}_${fingerprint || session_id || ip}`;
+      if (isRapidDuplicateClick(clickDedupeKey)) {
+        return jsonResponse({ success: true, ignored: true, reason: "duplicate_click_cooldown" }, 200);
+      }
     }
 
     const supabaseUrl =
@@ -191,11 +221,6 @@ Deno.serve(async (req: Request) => {
       req.headers.get("cf-ipcity") ||
       params.city ||
       "Unknown";
-
-    const ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      req.headers.get("x-real-ip") ||
-      "0.0.0.0";
 
     const landingPage =
       params.landing_page ||
@@ -305,6 +330,9 @@ Deno.serve(async (req: Request) => {
         gpu_renderer: gpu_renderer || null,
         timezone: timezone || null,
         language: language || null,
+        has_moved: typeof has_moved === "boolean" ? has_moved : null,
+        scroll_depth: typeof scroll_depth === "number" ? scroll_depth : null,
+        time_on_page: typeof time_on_page === "number" ? time_on_page : null,
         is_duplicate: isDuplicate,
         browser: uaBrowser,
         user_agent: userAgent || null,
@@ -332,6 +360,21 @@ Deno.serve(async (req: Request) => {
         utm_medium: params.utm_medium || null,
         utm_campaign: params.utm_campaign || null,
         keyword: params.keyword || null,
+        fingerprint: fingerprint || null,
+        screen_resolution: screen_resolution || null,
+        cpu_cores: typeof cpu_cores === "number" ? cpu_cores : (cpu_cores ? parseInt(cpu_cores, 10) : null),
+        device_memory: typeof device_memory === "number" ? device_memory : (device_memory ? parseFloat(device_memory) : null),
+        gpu_renderer: gpu_renderer || null,
+        timezone: timezone || null,
+        language: language || null,
+        has_moved: typeof has_moved === "boolean" ? has_moved : null,
+        scroll_depth: typeof scroll_depth === "number" ? scroll_depth : null,
+        time_on_page: typeof time_on_page === "number" ? time_on_page : null,
+        browser: uaBrowser,
+        user_agent: userAgent || null,
+        is_duplicate: isDuplicateGclid,
+        is_bot: isBot,
+        status: eventStatus,
       });
       if (error) {
         return jsonResponse({ error: "Failed to save click", details: error.message }, 500);
@@ -339,8 +382,6 @@ Deno.serve(async (req: Request) => {
     }
 
     // Forward to Google Apps Script URL
-    // BOT_FILTERED → tidak dikirim ke Sheets
-    // DUPLICATE / SPAM_SUSPECT / OK → dikirim dengan status yang sesuai
     const shouldForwardToSheets =
       profile.forwarding_active !== false &&
       profile.apps_script_url &&
@@ -370,7 +411,10 @@ Deno.serve(async (req: Request) => {
         gpu_renderer: gpu_renderer || null,
         timezone: timezone || null,
         language: language || null,
-        is_duplicate: isDuplicate,
+        has_moved: has_moved ?? null,
+        scroll_depth: scroll_depth ?? null,
+        time_on_page: time_on_page ?? null,
+        is_duplicate: isDuplicate || isDuplicateGclid,
         timestamp: new Date().toISOString(),
         status: eventStatus,
         spam_suspect: isSpamSuspect,
@@ -406,7 +450,7 @@ Deno.serve(async (req: Request) => {
       success: true,
       event,
       status: eventStatus,
-      is_duplicate: isDuplicate,
+      is_duplicate: isDuplicate || isDuplicateGclid,
       spam_suspect: isSpamSuspect,
       filtered_bot: isBot || isDuplicateGclid,
     });

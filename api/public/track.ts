@@ -16,6 +16,25 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   auth: { persistSession: false },
 });
 
+// Rapid click deduplication / debounce in-memory
+const lastClickMap = new Map<string, number>();
+const CLICK_DEBOUNCE_MS = 2000; // 2 detik
+
+function isDuplicateClick(key: string): boolean {
+  const now = Date.now();
+  const last = lastClickMap.get(key);
+  if (last !== undefined && now - last < CLICK_DEBOUNCE_MS) {
+    return true;
+  }
+  lastClickMap.set(key, now);
+  if (lastClickMap.size > 5000) {
+    for (const [k, v] of lastClickMap.entries()) {
+      if (now - v > 30000) lastClickMap.delete(k);
+    }
+  }
+  return false;
+}
+
 function parseUserAgent(userAgent: string) {
   const device = /iPad|Tablet/i.test(userAgent)
     ? 'Tablet'
@@ -68,6 +87,9 @@ export default async function handler(req: any, res: any) {
       gpu_renderer,
       timezone,
       language,
+      has_moved,
+      scroll_depth,
+      time_on_page,
       is_bot,
       gclid,
       utm_source,
@@ -79,6 +101,20 @@ export default async function handler(req: any, res: any) {
 
     if (!tracking_key) {
       return res.status(400).json({ success: false, error: 'Missing tracking_key' });
+    }
+
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const ipAddress = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor?.split(',')[0]?.trim()) ||
+      req.headers['x-real-ip'] ||
+      req.headers['x-vercel-forwarded-for'] ||
+      null;
+
+    // Server-side click debounce check
+    if (event === 'click') {
+      const clickKey = `clk_${tracking_key}_${fingerprint || session_id || ipAddress}`;
+      if (isDuplicateClick(clickKey)) {
+        return res.status(200).json({ success: true, ignored: true, reason: 'duplicate_click_cooldown' });
+      }
     }
 
     // Resolve the key against the current multi-site table first.
@@ -111,11 +147,6 @@ export default async function handler(req: any, res: any) {
       return res.status(404).json({ success: false, error: 'Invalid tracking_key' });
     }
 
-    const forwardedFor = req.headers['x-forwarded-for'];
-    const ipAddress = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor?.split(',')[0]?.trim()) ||
-      req.headers['x-real-ip'] ||
-      req.headers['x-vercel-forwarded-for'] ||
-      null;
     const country = req.headers['x-vercel-ip-country'] || req.headers['cf-ipcountry'] || null;
     const rawCity = req.headers['x-vercel-ip-city'] || req.headers['cf-ipcity'] || null;
     const city = rawCity ? decodeURIComponent(rawCity) : null;
@@ -160,6 +191,9 @@ export default async function handler(req: any, res: any) {
       gpu_renderer: gpu_renderer || null,
       timezone: timezone || null,
       language: language || null,
+      has_moved: typeof has_moved === 'boolean' ? has_moved : null,
+      scroll_depth: typeof scroll_depth === 'number' ? scroll_depth : null,
+      time_on_page: typeof time_on_page === 'number' ? time_on_page : null,
       is_duplicate: isDuplicate,
       ip_address: ipAddress,
       country,
@@ -184,10 +218,21 @@ export default async function handler(req: any, res: any) {
           utm_medium: utm_medium || null,
           utm_campaign: utm_campaign || null,
           keyword: keyword || null,
+          fingerprint: fingerprint || null,
+          screen_resolution: screen_resolution || null,
+          cpu_cores: typeof cpu_cores === 'number' ? cpu_cores : (cpu_cores ? parseInt(cpu_cores, 10) : null),
+          device_memory: typeof device_memory === 'number' ? device_memory : (device_memory ? parseFloat(device_memory) : null),
+          gpu_renderer: gpu_renderer || null,
+          timezone: timezone || null,
+          language: language || null,
+          has_moved: typeof has_moved === 'boolean' ? has_moved : null,
+          scroll_depth: typeof scroll_depth === 'number' ? scroll_depth : null,
+          time_on_page: typeof time_on_page === 'number' ? time_on_page : null,
           ip_address: ipAddress,
           country,
           city,
           device,
+          browser,
           created_at: commonPayload.created_at
         }])
       : websiteId

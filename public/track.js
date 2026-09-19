@@ -1,6 +1,12 @@
 (function () {
   'use strict';
 
+  // Prevent double execution if track.js is loaded multiple times
+  if (window.__VRN_TRACK_INITIALIZED__) {
+    return;
+  }
+  window.__VRN_TRACK_INITIALIZED__ = true;
+
   var script = document.currentScript;
   var trackingKey = script && script.getAttribute('data-tracking-id');
 
@@ -13,6 +19,42 @@
     : window.location.origin) + '/api/public/track';
   var urlParams = new URLSearchParams(window.location.search);
   var sessionId;
+  var startTime = Date.now();
+  var hasMoved = false;
+  var maxScrollDepth = 0;
+
+  // Track user engagement / behavior
+  function onUserMove() {
+    hasMoved = true;
+  }
+  window.addEventListener('mousemove', onUserMove, { passive: true, once: true });
+  window.addEventListener('touchstart', onUserMove, { passive: true, once: true });
+  window.addEventListener('scroll', onUserMove, { passive: true, once: true });
+  window.addEventListener('keydown', onUserMove, { passive: true, once: true });
+
+  // Track max scroll depth
+  function updateScrollDepth() {
+    try {
+      var docElem = document.documentElement;
+      var docBody = document.body;
+      var scrollTop = window.pageYOffset || docElem.scrollTop || docBody.scrollTop || 0;
+      var scrollHeight = Math.max(
+        docBody.scrollHeight, docElem.scrollHeight,
+        docBody.offsetHeight, docElem.offsetHeight,
+        docBody.clientHeight, docElem.clientHeight
+      );
+      var clientHeight = window.innerHeight || docElem.clientHeight || 0;
+      if (scrollHeight > clientHeight) {
+        var depth = Math.round(((scrollTop + clientHeight) / scrollHeight) * 100);
+        if (depth > maxScrollDepth) {
+          maxScrollDepth = Math.min(depth, 100);
+        }
+      } else {
+        maxScrollDepth = 100;
+      }
+    } catch (e) {}
+  }
+  window.addEventListener('scroll', updateScrollDepth, { passive: true });
 
   try {
     sessionId = sessionStorage.getItem('vrn_track_session_id');
@@ -131,6 +173,9 @@
 
   function sendEvent(eventType, extraData) {
     var hw = getHardwareInfo();
+    updateScrollDepth();
+
+    var timeOnPage = Math.max(0, Math.round((Date.now() - startTime) / 1000));
 
     getFingerprint(hw).then(function (fingerprint) {
       var payload = Object.assign({
@@ -144,6 +189,9 @@
         gpu_renderer: hw.gpu_renderer,
         timezone: hw.timezone,
         language: hw.language,
+        has_moved: hasMoved,
+        scroll_depth: maxScrollDepth,
+        time_on_page: timeOnPage,
         page_url: window.location.href,
         referrer: document.referrer || '',
         gclid: urlParams.get('gclid') || '',
@@ -181,7 +229,16 @@
     });
   }
 
+  // Cooldown / Debounce mechanism for click events (2000ms cooldown)
+  var lastClickTime = 0;
+  var CLICK_COOLDOWN_MS = 2000;
+
   function trackClick(data) {
+    var now = Date.now();
+    if (now - lastClickTime < CLICK_COOLDOWN_MS) {
+      return; // Ignore rapid duplicate click
+    }
+    lastClickTime = now;
     sendEvent('click', data);
   }
 
@@ -196,6 +253,11 @@
     var element = target.closest('[data-vrn-click], a[href^="https://wa.me/"], a[href^="https://api.whatsapp.com/"], a[href^="tel:"]');
     if (!element) return;
 
+    var now = Date.now();
+    if (now - lastClickTime < CLICK_COOLDOWN_MS) {
+      return; // Ignore duplicate click trigger
+    }
+
     trackClick({
       click_target: element.getAttribute('data-vrn-click') || element.getAttribute('href') || element.tagName.toLowerCase(),
       landing_page: window.location.href
@@ -204,6 +266,7 @@
 
   function initialize() {
     sendEvent('page_view');
+    // Listen to pure 'click' event only (avoids touchstart + click double triggers)
     document.addEventListener('click', captureClick, { passive: true, capture: true });
   }
 
