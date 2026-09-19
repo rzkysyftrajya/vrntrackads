@@ -56,50 +56,77 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ success: false, error: 'Missing tracking_key' });
     }
 
-    // 1. Ambil data website/profile dari Supabase berdasarkan tracking_key
+    // Resolve the key against the current multi-site table first.
     const { data: website } = await supabase
       .from('websites')
       .select('id, user_id')
       .eq('tracking_key', tracking_key)
       .maybeSingle();
 
-    const websiteId = website?.id || null;
-    const userId = website?.user_id || null;
+    let websiteId = website?.id || null;
+    let userId = website?.user_id || null;
 
-    // 2. Tembak ke tabel clicks / page_views (Gunakan payload netral)
-    const insertPayload = {
+    if (!websiteId) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id, user_id')
+        .or(`tracking_key.eq.${tracking_key},user_id.eq.${tracking_key},id.eq.${tracking_key}`)
+        .maybeSingle();
+
+      userId = profile?.user_id || profile?.id || null;
+    }
+
+    if (!userId) {
+      return res.status(404).json({ success: false, error: 'Invalid tracking_key' });
+    }
+
+    const commonPayload = {
       tracking_key: tracking_key,
       website_id: websiteId,
       user_id: userId,
       landing_page: page_url || landing_page || '',
-      page_url: page_url || landing_page || '',
       referrer: referrer || null,
       session_id: session_id || null,
-      gclid: gclid || null,
-      utm_source: utm_source || null,
-      utm_medium: utm_medium || null,
-      utm_campaign: utm_campaign || null,
-      keyword: keyword || null,
       user_agent: user_agent || req.headers['user-agent'] || null,
       status: 'OK',
       created_at: new Date().toISOString()
     };
 
-    // Coba insert ke tabel page_views terlebih dahulu
-    let insertResult = await supabase.from('page_views').insert([insertPayload]);
+    const isClick = event === 'click';
+    let insertResult = isClick
+      ? await supabase.from('clicks').insert([{
+          tracking_key,
+          website_id: websiteId,
+          user_id: userId,
+          landing_page: commonPayload.landing_page,
+          gclid: gclid || null,
+          utm_source: utm_source || null,
+          utm_medium: utm_medium || null,
+          utm_campaign: utm_campaign || null,
+          keyword: keyword || null,
+          created_at: commonPayload.created_at
+        }])
+      : websiteId
+        ? await supabase.from('page_views').insert([{
+            ...commonPayload,
+            page_url: commonPayload.landing_page
+          }])
+        : await supabase.from('impressions').insert([{
+            tracking_key,
+            user_id: userId,
+            landing_page: commonPayload.landing_page,
+            referrer: commonPayload.referrer,
+            created_at: commonPayload.created_at
+          }]);
 
-    // Jika tabel page_views tidak ada / error, fallback insert ke tabel clicks
-    if (insertResult.error) {
-      console.warn('Fallback ke tabel clicks karena page_views error:', insertResult.error.message);
-      insertResult = await supabase.from('clicks').insert([{
-        tracking_key: tracking_key,
-        landing_page: page_url || landing_page || '',
-        gclid: gclid || null,
-        utm_source: utm_source || null,
-        utm_medium: utm_medium || null,
-        utm_campaign: utm_campaign || null,
-        keyword: keyword || null,
-        status: 'OK'
+    if (insertResult.error && !isClick && websiteId) {
+      console.warn('Fallback ke tabel impressions karena page_views error:', insertResult.error.message);
+      insertResult = await supabase.from('impressions').insert([{
+        tracking_key,
+        user_id: userId,
+        landing_page: commonPayload.landing_page,
+        referrer: commonPayload.referrer,
+        created_at: commonPayload.created_at
       }]);
     }
 
