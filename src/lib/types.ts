@@ -1,4 +1,4 @@
-export type DateFilter = 'today' | 'yesterday' | '7days' | 'custom';
+export type DateFilter = 'today' | 'yesterday' | '7days' | '30days' | 'custom';
 
 export interface Website {
   id: string;
@@ -100,6 +100,7 @@ export interface LiveFeedItem {
   ip_address?: string | null;
   gclid?: string | null;
   utm_source?: string | null;
+  utm_campaign?: string | null;
   keyword?: string | null;
   landing_page: string;
   fingerprint?: string | null;
@@ -117,4 +118,12 @@ export interface LiveFeedItem {
   status?: string | null;
   created_at: string;
   forwarding_status?: string | null;
+}
+
+export interface KeywordReportItem {
+  keyword: string;
+  utm_campaign: string;
+  utm_source: string;
+  clicks: number;
+  percentage: number;
 }

@@ -47,6 +47,17 @@ export function getDateRangeBounds(
     };
   }
 
+  if (filter === '30days') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29, 0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    return {
+      start,
+      end,
+      startIso: start.toISOString(),
+      endIso: end.toISOString(),
+    };
+  }
+
   // 'custom'
   let start: Date;
   let end: Date;
@@ -81,6 +92,12 @@ export function formatDisplayDateRange(start: Date, end: Date, filter: DateFilte
   if (filter === 'yesterday') {
     return `Kemarin (${start.toLocaleDateString('id-ID', options)})`;
   }
+  if (filter === '7days') {
+    return `7 Hari Terakhir (${start.toLocaleDateString('id-ID', options)} — ${end.toLocaleDateString('id-ID', options)})`;
+  }
+  if (filter === '30days') {
+    return `30 Hari Terakhir (${start.toLocaleDateString('id-ID', options)} — ${end.toLocaleDateString('id-ID', options)})`;
+  }
   return `${start.toLocaleDateString('id-ID', options)} — ${end.toLocaleDateString('id-ID', options)}`;
 }
 
@@ -93,4 +110,3 @@ export function formatTimelineLabel(dateStr: string): string {
   }
   return dateStr;
 }
-

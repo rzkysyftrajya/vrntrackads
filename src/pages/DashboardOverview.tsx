@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
-import type { TimelinePoint, LiveFeedItem, DateFilter, Impression, Click, Website } from '@/lib/types';
+import type { TimelinePoint, LiveFeedItem, DateFilter, Impression, Click, Website, KeywordReportItem } from '@/lib/types';
 import type { PageId } from '@/components/Layout';
 import {
   Eye,
@@ -34,6 +34,8 @@ import {
   Bot,
   Timer,
   ArrowDownCircle,
+  BarChart2,
+  Target,
 } from 'lucide-react';
 
 import {
@@ -60,6 +62,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
   const { notify } = useToast();
   const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
   const [liveFeed, setLiveFeed] = useState<LiveFeedItem[]>([]);
+  const [rawClicks, setRawClicks] = useState<Click[]>([]);
   const [stats, setStats] = useState<DashboardStats>({
     totalImpressions: 0,
     uniqueVisitors: 0,
@@ -76,7 +79,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
   const [hideRefreshAndBot, setHideRefreshAndBot] = useState(false);
   const chartAnimKey = useRef(0);
 
-  // Date Range Filter State ('today', 'yesterday', '7days', 'custom')
+  // Date Range Filter State ('today', 'yesterday', '7days', '30days', 'custom')
   const [dateFilter, setDateFilter] = useState<DateFilter>('today');
   const [customStartDate, setCustomStartDate] = useState(() => {
     const d = new Date();
@@ -177,6 +180,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
 
       const impList = (impressions || []) as (Impression & { timestamp?: string })[];
       const clkList = (clicks || []) as (Click & { timestamp?: string })[];
+      setRawClicks(clkList);
+
       const impCount = impList.length;
       const clkCount = clkList.length;
 
@@ -238,7 +243,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
 
         const cur = new Date(startDay);
         let count = 0;
-        while (cur <= endDay && count < 31) {
+        const maxDays = dateFilter === '30days' ? 31 : 31;
+        while (cur <= endDay && count < maxDays) {
           const key = cur.toISOString().slice(0, 10);
           days[key] = { impressions: 0, clicks: 0 };
           cur.setDate(cur.getDate() + 1);
@@ -305,6 +311,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           ip_address: r.ip_address || 'Unknown',
           gclid: r.gclid,
           utm_source: r.utm_source,
+          utm_campaign: r.utm_campaign,
           keyword: r.keyword,
           landing_page: r.landing_page || '/',
           fingerprint: r.fingerprint || null,
@@ -439,6 +446,26 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
             ? r.website_id === activeWebsiteId
             : r.tracking_key === trackingKey;
           if (belongsToSelectedWebsite) {
+            const newClickObj: Click = {
+              id: String(r.id || ''),
+              website_id: String(r.website_id || ''),
+              user_id: String(r.user_id || ''),
+              tracking_key: String(r.tracking_key || ''),
+              gclid: r.gclid ? String(r.gclid) : null,
+              utm_source: r.utm_source ? String(r.utm_source) : null,
+              utm_medium: r.utm_medium ? String(r.utm_medium) : null,
+              utm_campaign: r.utm_campaign ? String(r.utm_campaign) : null,
+              keyword: r.keyword ? String(r.keyword) : null,
+              device: String(r.device || 'Unknown'),
+              ip_address: String(r.ip_address || 'Unknown'),
+              country: String(r.country || 'Unknown'),
+              city: String(r.city || 'Unknown'),
+              landing_page: String(r.landing_page || '/'),
+              created_at: String(r.created_at || r.timestamp || new Date().toISOString()),
+            };
+
+            setRawClicks((prev) => [newClickObj, ...prev]);
+
             const item: LiveFeedItem = {
               id: String(r.id || ''),
               type: 'click',
@@ -449,6 +476,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               ip_address: String(r.ip_address || 'Unknown'),
               gclid: r.gclid ? String(r.gclid) : undefined,
               utm_source: r.utm_source ? String(r.utm_source) : undefined,
+              utm_campaign: r.utm_campaign ? String(r.utm_campaign) : undefined,
               keyword: r.keyword ? String(r.keyword) : undefined,
               landing_page: String(r.landing_page || '/'),
               has_moved: typeof r.has_moved === 'boolean' ? r.has_moved : null,
@@ -508,6 +536,39 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
     customEndDate,
   ]);
 
+  // Keyword & UTM Performance Report Aggregation
+  const keywordReports: KeywordReportItem[] = useMemo(() => {
+    const totalLeads = rawClicks.length;
+    if (totalLeads === 0) return [];
+
+    const groupMap = new Map<string, { keyword: string; utm_campaign: string; utm_source: string; count: number }>();
+
+    rawClicks.forEach((clk) => {
+      const kw = (clk.keyword || '').trim() || '(tidak ada keyword)';
+      const camp = (clk.utm_campaign || '').trim() || '(tidak ada campaign)';
+      const src = (clk.utm_source || '').trim() || 'google_ads';
+      const key = `${kw}__##__${camp}`;
+
+      const existing = groupMap.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        groupMap.set(key, { keyword: kw, utm_campaign: camp, utm_source: src, count: 1 });
+      }
+    });
+
+    const list: KeywordReportItem[] = Array.from(groupMap.values()).map((item) => ({
+      keyword: item.keyword,
+      utm_campaign: item.utm_campaign,
+      utm_source: item.utm_source,
+      clicks: item.count,
+      percentage: totalLeads > 0 ? (item.count / totalLeads) * 100 : 0,
+    }));
+
+    // Sort by total clicks descending
+    return list.sort((a, b) => b.clicks - a.clicks);
+  }, [rawClicks]);
+
   // Filtered Live Feed based on Toggle
   const displayedFeed = useMemo(() => {
     if (!hideRefreshAndBot) return liveFeed;
@@ -545,6 +606,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       'Landing Page',
       'GCLID',
       'UTM Source',
+      'UTM Campaign',
       'Keyword',
     ];
 
@@ -573,6 +635,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         `"${(item.landing_page || '').replace(/"/g, '""')}"`,
         `"${item.gclid || ''}"`,
         `"${item.utm_source || ''}"`,
+        `"${item.utm_campaign || ''}"`,
         `"${(item.keyword || '').replace(/"/g, '""')}"`,
       ].join(',');
     });
@@ -684,7 +747,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               <h2 className="text-base font-bold text-white">VRN TRACK ADS — Real-time Google Ads Visitor Tracker</h2>
             </div>
             <p className="text-xs text-zinc-300 max-w-2xl leading-relaxed">
-              Lacak <strong>Browser Fingerprint, Hardware Spec, Behavioral Movements (Scroll &amp; Time), IP, GCLID, UTM, &amp; Deteksi Refresh/Bot</strong> secara otomatis.
+              Lacak <strong>Kata Kunci (Keywords), Kampanye (UTMs), Browser Fingerprint, Hardware Spec, Behavioral Movements, &amp; Deteksi Refresh/Bot</strong> secara otomatis.
             </p>
           </div>
 
@@ -747,6 +810,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                 {dateFilter === 'today' && 'Hari Ini'}
                 {dateFilter === 'yesterday' && 'Kemarin'}
                 {dateFilter === '7days' && '7 Hari Terakhir'}
+                {dateFilter === '30days' && '30 Hari Terakhir'}
                 {dateFilter === 'custom' && 'Rentang Kustom'}
               </span>
             </div>
@@ -767,6 +831,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               <option value="today" className="bg-zinc-900 text-white">Hari Ini (Today)</option>
               <option value="yesterday" className="bg-zinc-900 text-white">Kemarin (Yesterday)</option>
               <option value="7days" className="bg-zinc-900 text-white">7 Hari Terakhir (Last 7 Days)</option>
+              <option value="30days" className="bg-zinc-900 text-white">30 Hari Terakhir (Last 30 Days)</option>
               <option value="custom" className="bg-zinc-900 text-white">Rentang Kustom (Custom Range)...</option>
             </select>
             <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400">
@@ -887,6 +952,124 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         />
       </div>
 
+      {/* Sub-Section Baru: Performa Kata Kunci Google Ads (UTM & Keywords Report) */}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-xl overflow-hidden shadow-2xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/10 px-6 py-4 gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+              <Target className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                Performa Kata Kunci Google Ads (UTM &amp; Keywords)
+                <span className="rounded-full bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                  {keywordReports.length} Keyword Aktif
+                </span>
+              </h3>
+              <p className="text-xs text-zinc-400">
+                Analisis kata kunci pencarian dan kampanye yang menghasilkan klik/lead WhatsApp terbanyak
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-zinc-400 font-mono">
+            <BarChart2 className="h-3.5 w-3.5 text-amber-400" />
+            <span>Total Leads: <strong className="text-white">{stats.totalClicks}</strong></span>
+          </div>
+        </div>
+
+        <div className="max-h-[400px] overflow-x-auto overflow-y-auto">
+          {loading ? (
+            <div className="px-6 py-10 text-center text-xs text-zinc-500 flex flex-col items-center gap-2">
+              <RefreshCw className="h-4 w-4 animate-spin text-amber-400" />
+              Menganalisis laporan kata kunci...
+            </div>
+          ) : keywordReports.length === 0 ? (
+            <div className="px-6 py-10 text-center space-y-2">
+              <p className="text-xs font-medium text-zinc-300">Belum ada data klik kata kunci / UTM pada periode ini.</p>
+              <p className="text-[11px] text-zinc-500 max-w-md mx-auto">
+                Pastikan template pelacakan Google Ads Anda menyertakan parameter <code className="text-zinc-400 bg-zinc-800 px-1 py-0.5 rounded font-mono">keyword={`{keyword}`}</code> dan <code className="text-zinc-400 bg-zinc-800 px-1 py-0.5 rounded font-mono">utm_campaign={`{campaignid}`}</code>.
+              </p>
+            </div>
+          ) : (
+            <table className="w-full text-left min-w-[700px]">
+              <thead className="sticky top-0 bg-zinc-950/95 backdrop-blur-xl border-b border-white/10 z-10">
+                <tr className="text-[10px] uppercase tracking-wider text-zinc-400 font-bold">
+                  <th className="px-5 py-3">Kata Kunci / Keyword</th>
+                  <th className="px-5 py-3">Kampanye (UTM Campaign)</th>
+                  <th className="px-5 py-3">Sumber (UTM Source)</th>
+                  <th className="px-5 py-3 text-center">Total Klik WhatsApp</th>
+                  <th className="px-5 py-3 text-right">Persentase Leads</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {keywordReports.map((item, index) => {
+                  const isHighConverting = item.clicks > 10;
+
+                  return (
+                    <tr key={`${item.keyword}-${item.utm_campaign}-${index}`} className="transition hover:bg-white/[0.03]">
+                      {/* Keyword */}
+                      <td className="px-5 py-3.5 text-xs">
+                        <div className="flex items-center gap-2">
+                          <Search className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                          <span className="font-semibold text-white">&ldquo;{item.keyword}&rdquo;</span>
+                          {isHighConverting && (
+                            <span className="rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[9px] font-bold text-emerald-400">
+                              🔥 Top Winner
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* UTM Campaign */}
+                      <td className="px-5 py-3.5 text-xs text-zinc-300">
+                        <span className="inline-flex items-center gap-1 rounded bg-zinc-800 px-2 py-0.5 text-[10px] font-mono text-zinc-300 border border-white/5">
+                          <Tag className="h-3 w-3 text-zinc-400" />
+                          {item.utm_campaign}
+                        </span>
+                      </td>
+
+                      {/* UTM Source */}
+                      <td className="px-5 py-3.5 text-xs text-zinc-400 font-mono text-[11px]">
+                        {item.utm_source}
+                      </td>
+
+                      {/* Total Clicks */}
+                      <td className="px-5 py-3.5 text-center">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                            isHighConverting
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
+                          }`}
+                        >
+                          <MousePointerClick className="h-3 w-3" />
+                          {item.clicks} Klik
+                        </span>
+                      </td>
+
+                      {/* Percentage of Total Leads */}
+                      <td className="px-5 py-3.5 text-right">
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="font-mono text-xs font-bold text-amber-400">
+                            {item.percentage.toFixed(1)}%
+                          </span>
+                          <div className="h-1.5 w-24 rounded-full bg-zinc-800 overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 rounded-full"
+                              style={{ width: `${Math.min(item.percentage, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
       {/* Traffic Chart */}
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl">
         <div className="mb-6 flex items-center justify-between">
@@ -895,6 +1078,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               {dateFilter === 'today' && 'Grafik Performa Traffic (Hari Ini)'}
               {dateFilter === 'yesterday' && 'Grafik Performa Traffic (Kemarin)'}
               {dateFilter === '7days' && 'Grafik Performa Traffic (7 Hari Terakhir)'}
+              {dateFilter === '30days' && 'Grafik Performa Traffic (30 Hari Terakhir)'}
               {dateFilter === 'custom' && `Grafik Performa Traffic (${customStartDate} s/d ${customEndDate})`}
             </h3>
             <p className="text-xs text-zinc-400">
@@ -1199,13 +1383,18 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                                 UTM: {item.utm_source}
                               </span>
                             )}
+                            {item.utm_campaign && (
+                              <span className="inline-flex items-center gap-1 rounded bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 text-[10px] font-mono text-purple-300 ml-1">
+                                Camp: {item.utm_campaign}
+                              </span>
+                            )}
                             {item.keyword && (
                               <div className="text-[11px] text-amber-300 flex items-center gap-1 font-medium">
                                 <Search className="h-3 w-3 text-amber-400" />
                                 &ldquo;{item.keyword}&rdquo;
                               </div>
                             )}
-                            {!item.gclid && !item.utm_source && !item.keyword && (
+                            {!item.gclid && !item.utm_source && !item.utm_campaign && !item.keyword && (
                               <span className="text-zinc-600 font-mono text-xs">-</span>
                             )}
                           </div>
