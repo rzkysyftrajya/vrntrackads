@@ -28,12 +28,24 @@ export interface Impression {
   user_id: string | null;
   tracking_key: string | null;
   landing_page: string | null;
+  page_url?: string | null;
   referrer: string | null;
   country: string | null;
   city: string | null;
   device: string | null;
   browser: string | null;
   ip_address: string | null;
+  fingerprint?: string | null;
+  screen_resolution?: string | null;
+  cpu_cores?: number | null;
+  device_memory?: number | null;
+  gpu_renderer?: string | null;
+  timezone?: string | null;
+  language?: string | null;
+  is_duplicate?: boolean;
+  is_bot?: boolean;
+  bot_reasons?: string | null;
+  status?: string | null;
   created_at: string;
 }
 
@@ -53,6 +65,16 @@ export interface Click {
   city: string | null;
   browser?: string | null;
   landing_page: string | null;
+  fingerprint?: string | null;
+  screen_resolution?: string | null;
+  cpu_cores?: number | null;
+  device_memory?: number | null;
+  gpu_renderer?: string | null;
+  timezone?: string | null;
+  language?: string | null;
+  is_duplicate?: boolean;
+  is_bot?: boolean;
+  status?: string | null;
   created_at: string;
 }
 
@@ -74,6 +96,16 @@ export interface LiveFeedItem {
   utm_source?: string | null;
   keyword?: string | null;
   landing_page: string;
+  fingerprint?: string | null;
+  screen_resolution?: string | null;
+  cpu_cores?: number | null;
+  device_memory?: number | null;
+  gpu_renderer?: string | null;
+  timezone?: string | null;
+  language?: string | null;
+  is_duplicate?: boolean;
+  is_bot?: boolean;
+  status?: string | null;
   created_at: string;
   forwarding_status?: string | null;
 }
