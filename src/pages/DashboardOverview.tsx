@@ -292,6 +292,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           gpu_renderer: r.gpu_renderer || null,
           timezone: r.timezone || null,
           language: r.language || null,
+          battery_level: typeof r.battery_level === 'number' ? r.battery_level : null,
+          network_type: r.network_type || null,
           has_moved: r.has_moved !== undefined ? r.has_moved : null,
           scroll_depth: typeof r.scroll_depth === 'number' ? r.scroll_depth : null,
           time_on_page: typeof r.time_on_page === 'number' ? r.time_on_page : null,
@@ -321,6 +323,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           gpu_renderer: r.gpu_renderer || null,
           timezone: r.timezone || null,
           language: r.language || null,
+          battery_level: typeof r.battery_level === 'number' ? r.battery_level : null,
+          network_type: r.network_type || null,
           has_moved: r.has_moved !== undefined ? r.has_moved : null,
           scroll_depth: typeof r.scroll_depth === 'number' ? r.scroll_depth : null,
           time_on_page: typeof r.time_on_page === 'number' ? r.time_on_page : null,
@@ -386,6 +390,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               gpu_renderer: r.gpu_renderer ? String(r.gpu_renderer) : null,
               timezone: r.timezone ? String(r.timezone) : null,
               language: r.language ? String(r.language) : null,
+              battery_level: typeof r.battery_level === 'number' ? r.battery_level : null,
+              network_type: r.network_type ? String(r.network_type) : null,
               has_moved: typeof r.has_moved === 'boolean' ? r.has_moved : null,
               scroll_depth: typeof r.scroll_depth === 'number' ? r.scroll_depth : null,
               time_on_page: typeof r.time_on_page === 'number' ? r.time_on_page : null,
@@ -482,6 +488,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               has_moved: typeof r.has_moved === 'boolean' ? r.has_moved : null,
               scroll_depth: typeof r.scroll_depth === 'number' ? r.scroll_depth : null,
               time_on_page: typeof r.time_on_page === 'number' ? r.time_on_page : null,
+              battery_level: typeof r.battery_level === 'number' ? r.battery_level : null,
+              network_type: r.network_type ? String(r.network_type) : null,
               created_at: String(r.created_at || r.timestamp || new Date().toISOString()),
               forwarding_status: profile?.apps_script_url && profile?.forwarding_active ? 'Sent to Apps Script' : 'Disabled',
             };
@@ -603,6 +611,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       'Screen Resolution',
       'Timezone',
       'Language',
+      'Battery Level (%)',
+      'Network Type',
       'Landing Page',
       'GCLID',
       'UTM Source',
@@ -632,6 +642,8 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         `"${item.screen_resolution || ''}"`,
         `"${item.timezone || ''}"`,
         `"${item.language || ''}"`,
+        `"${item.battery_level !== null && item.battery_level !== undefined ? item.battery_level : ''}"`,
+        `"${item.network_type || ''}"`,
         `"${(item.landing_page || '').replace(/"/g, '""')}"`,
         `"${item.gclid || ''}"`,
         `"${item.utm_source || ''}"`,
@@ -1340,6 +1352,28 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                           {item.device_memory && (
                             <span className="rounded bg-zinc-800/80 px-1.5 py-0.5 border border-white/5 font-mono text-purple-300">
                               {item.device_memory}GB RAM
+                            </span>
+                          )}
+                          {item.battery_level !== null && item.battery_level !== undefined && (
+                            <span
+                              className={`rounded px-1.5 py-0.5 border font-mono ${
+                                item.battery_level > 50
+                                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                                  : item.battery_level > 20
+                                    ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                                    : 'bg-red-500/10 border-red-500/20 text-red-300'
+                              }`}
+                              title={`Level Baterai: ${item.battery_level}%`}
+                            >
+                              🔋 {item.battery_level}%
+                            </span>
+                          )}
+                          {item.network_type && (
+                            <span
+                              className="rounded bg-indigo-500/10 px-1.5 py-0.5 border border-indigo-500/20 font-mono text-indigo-300"
+                              title={`Tipe Jaringan: ${item.network_type.toUpperCase()}`}
+                            >
+                              📶 {item.network_type.toUpperCase()}
                             </span>
                           )}
                         </div>
