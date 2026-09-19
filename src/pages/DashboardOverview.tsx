@@ -907,7 +907,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                     <td className="px-4 py-3 text-xs text-zinc-200">
                       <div className="font-mono text-xs font-bold text-white flex items-center gap-1.5">
                         <Terminal className="h-3 w-3 text-emerald-400" />
-                        {item.ip_address || '180.252.10.4'}
+                        {item.ip_address || 'Unknown'}
                       </div>
                       <div className="text-[11px] text-zinc-400 flex items-center gap-1 mt-0.5">
                         <Globe className="h-3 w-3 text-cyan-400" />

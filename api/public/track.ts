@@ -16,6 +16,23 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   auth: { persistSession: false },
 });
 
+function parseUserAgent(userAgent: string) {
+  const device = /iPad|Tablet/i.test(userAgent)
+    ? 'Tablet'
+    : /Mobile|Android|iPhone|iPod/i.test(userAgent)
+      ? 'Mobile'
+      : 'Desktop';
+
+  let browser = 'Unknown';
+  if (/Edg\//i.test(userAgent)) browser = 'Edge';
+  else if (/OPR\//i.test(userAgent)) browser = 'Opera';
+  else if (/Chrome\//i.test(userAgent)) browser = 'Chrome';
+  else if (/Firefox\//i.test(userAgent)) browser = 'Firefox';
+  else if (/Safari\//i.test(userAgent)) browser = 'Safari';
+
+  return { device, browser };
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -86,7 +103,10 @@ export default async function handler(req: any, res: any) {
       req.headers['x-vercel-forwarded-for'] ||
       null;
     const country = req.headers['x-vercel-ip-country'] || req.headers['cf-ipcountry'] || null;
-    const city = req.headers['x-vercel-ip-city'] || req.headers['cf-ipcity'] || null;
+    const rawCity = req.headers['x-vercel-ip-city'] || req.headers['cf-ipcity'] || null;
+    const city = rawCity ? decodeURIComponent(rawCity) : null;
+    const requestUserAgent = user_agent || req.headers['user-agent'] || '';
+    const { device, browser } = parseUserAgent(requestUserAgent);
 
     const commonPayload = {
       tracking_key: tracking_key,
@@ -98,7 +118,9 @@ export default async function handler(req: any, res: any) {
       ip_address: ipAddress,
       country,
       city,
-      user_agent: user_agent || req.headers['user-agent'] || null,
+      device,
+      browser,
+      user_agent: requestUserAgent || null,
       status: 'OK',
       created_at: new Date().toISOString()
     };
@@ -118,6 +140,7 @@ export default async function handler(req: any, res: any) {
           ip_address: ipAddress,
           country,
           city,
+          device,
           created_at: commonPayload.created_at
         }])
       : websiteId
