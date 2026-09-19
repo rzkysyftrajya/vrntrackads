@@ -80,6 +80,14 @@ export default async function handler(req: any, res: any) {
       return res.status(404).json({ success: false, error: 'Invalid tracking_key' });
     }
 
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const ipAddress = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor?.split(',')[0]?.trim()) ||
+      req.headers['x-real-ip'] ||
+      req.headers['x-vercel-forwarded-for'] ||
+      null;
+    const country = req.headers['x-vercel-ip-country'] || req.headers['cf-ipcountry'] || null;
+    const city = req.headers['x-vercel-ip-city'] || req.headers['cf-ipcity'] || null;
+
     const commonPayload = {
       tracking_key: tracking_key,
       website_id: websiteId,
@@ -87,6 +95,9 @@ export default async function handler(req: any, res: any) {
       landing_page: page_url || landing_page || '',
       referrer: referrer || null,
       session_id: session_id || null,
+      ip_address: ipAddress,
+      country,
+      city,
       user_agent: user_agent || req.headers['user-agent'] || null,
       status: 'OK',
       created_at: new Date().toISOString()
@@ -104,6 +115,9 @@ export default async function handler(req: any, res: any) {
           utm_medium: utm_medium || null,
           utm_campaign: utm_campaign || null,
           keyword: keyword || null,
+          ip_address: ipAddress,
+          country,
+          city,
           created_at: commonPayload.created_at
         }])
       : websiteId
@@ -116,6 +130,9 @@ export default async function handler(req: any, res: any) {
             user_id: userId,
             landing_page: commonPayload.landing_page,
             referrer: commonPayload.referrer,
+            ip_address: ipAddress,
+            country,
+            city,
             created_at: commonPayload.created_at
           }]);
 
@@ -126,6 +143,9 @@ export default async function handler(req: any, res: any) {
         user_id: userId,
         landing_page: commonPayload.landing_page,
         referrer: commonPayload.referrer,
+        ip_address: ipAddress,
+        country,
+        city,
         created_at: commonPayload.created_at
       }]);
     }
