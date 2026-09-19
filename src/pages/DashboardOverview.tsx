@@ -146,22 +146,23 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
 
       // Keep the dashboard visible when the selected website context is stale
       // or the event was created with the legacy profile tracking key.
-      if (selectedWebsiteId && !impErr && !(impressions?.length) && !clkErr && !(clicks?.length)) {
-        const [fallbackImp, fallbackClk] = await Promise.all([
-          supabase.from(pageViewsTable).select('*')
-            .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
-            .gte('created_at', bounds.startIso)
-            .lte('created_at', bounds.endIso)
-            .order('created_at', { ascending: false })
-            .limit(500),
-          supabase.from('clicks').select('*')
-            .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
-            .gte('created_at', bounds.startIso)
-            .lte('created_at', bounds.endIso)
-            .order('created_at', { ascending: false })
-            .limit(500),
-        ]);
+      if (selectedWebsiteId && !impErr && !(impressions?.length)) {
+        const fallbackImp = await supabase.from(pageViewsTable).select('*')
+          .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
+          .gte('created_at', bounds.startIso)
+          .lte('created_at', bounds.endIso)
+          .order('created_at', { ascending: false })
+          .limit(500);
         if (fallbackImp.data?.length) impressions = fallbackImp.data;
+      }
+
+      if (selectedWebsiteId && !clkErr && !(clicks?.length)) {
+        const fallbackClk = await supabase.from('clicks').select('*')
+          .or(`user_id.eq.${profile?.user_id},tracking_key.eq.${trackingKey}`)
+          .gte('created_at', bounds.startIso)
+          .lte('created_at', bounds.endIso)
+          .order('created_at', { ascending: false })
+          .limit(500);
         if (fallbackClk.data?.length) clicks = fallbackClk.data;
       }
 
