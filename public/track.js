@@ -23,6 +23,10 @@
   var hasMoved = false;
   var maxScrollDepth = 0;
 
+  // Global Debounce / Timestamp Cooldown Lock (2000ms) for click events
+  var lastClickTimestamp = 0;
+  var CLICK_COOLDOWN_MS = 2000;
+
   // Track user engagement / behavior
   function onUserMove() {
     hasMoved = true;
@@ -229,16 +233,13 @@
     });
   }
 
-  // Cooldown / Debounce mechanism for click events (2000ms cooldown)
-  var lastClickTime = 0;
-  var CLICK_COOLDOWN_MS = 2000;
-
   function trackClick(data) {
     var now = Date.now();
-    if (now - lastClickTime < CLICK_COOLDOWN_MS) {
-      return; // Ignore rapid duplicate click
+    // Debounce / cooldown 2000ms: Jika klik terjadi < 2 detik dari klik sebelumnya, abaikan
+    if (now - lastClickTimestamp < CLICK_COOLDOWN_MS) {
+      return;
     }
-    lastClickTime = now;
+    lastClickTimestamp = now;
     sendEvent('click', data);
   }
 
@@ -254,8 +255,9 @@
     if (!element) return;
 
     var now = Date.now();
-    if (now - lastClickTime < CLICK_COOLDOWN_MS) {
-      return; // Ignore duplicate click trigger
+    // Debounce / cooldown 2000ms sebelum memproses event klik
+    if (now - lastClickTimestamp < CLICK_COOLDOWN_MS) {
+      return;
     }
 
     trackClick({
@@ -266,7 +268,7 @@
 
   function initialize() {
     sendEvent('page_view');
-    // Listen to pure 'click' event only (avoids touchstart + click double triggers)
+    // Hanya menempel pada event 'click' murni (bukan gabungan touchstart dan click)
     document.addEventListener('click', captureClick, { passive: true, capture: true });
   }
 
