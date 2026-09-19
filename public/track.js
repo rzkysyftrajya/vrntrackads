@@ -41,6 +41,45 @@
     }
   }
 
+  // Helper async function to get battery level and network type safely
+  function getBatteryAndNetwork() {
+    return new Promise(function (resolve) {
+      var result = {
+        battery_level: null,
+        network_type: null
+      };
+
+      // 1. Network effective type detection
+      try {
+        var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        if (conn) {
+          result.network_type = conn.effectiveType || conn.type || null;
+        }
+      } catch (e) {
+        result.network_type = null;
+      }
+
+      // 2. Battery level detection
+      try {
+        if (typeof navigator.getBattery === 'function') {
+          navigator.getBattery()
+            .then(function (battery) {
+              if (battery && typeof battery.level === 'number') {
+                result.battery_level = Math.round(battery.level * 100);
+              }
+              resolve(result);
+            })
+            .catch(function () {
+              resolve(result);
+            });
+          return;
+        }
+      } catch (e) {}
+
+      resolve(result);
+    });
+  }
+
   var endpoint = (script && script.src
     ? new URL(script.src).origin
     : window.location.origin) + '/api/public/track';
@@ -210,7 +249,10 @@
     var cleanCurrentUrl = getCleanUrl();
     var cleanReferrer = sanitizeString(document.referrer || '');
 
-    getFingerprint(hw).then(function (fingerprint) {
+    Promise.all([getFingerprint(hw), getBatteryAndNetwork()]).then(function (results) {
+      var fingerprint = results[0];
+      var netBattery = results[1] || {};
+
       var payload = Object.assign({
         event: eventType,
         tracking_key: trackingKey,
@@ -222,6 +264,8 @@
         gpu_renderer: hw.gpu_renderer,
         timezone: hw.timezone,
         language: hw.language,
+        battery_level: netBattery.battery_level !== undefined ? netBattery.battery_level : null,
+        network_type: netBattery.network_type || null,
         has_moved: hasMoved,
         scroll_depth: maxScrollDepth,
         time_on_page: timeOnPage,
@@ -259,7 +303,7 @@
         mode: 'cors',
         credentials: 'omit'
       }).catch(function () {});
-    });
+    }).catch(function () {});
   }
 
   function trackClick(data) {

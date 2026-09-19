@@ -42,6 +42,8 @@ export interface Impression {
   gpu_renderer?: string | null;
   timezone?: string | null;
   language?: string | null;
+  battery_level?: number | null;
+  network_type?: string | null;
   has_moved?: boolean | null;
   scroll_depth?: number | null;
   time_on_page?: number | null;
@@ -75,6 +77,8 @@ export interface Click {
   gpu_renderer?: string | null;
   timezone?: string | null;
   language?: string | null;
+  battery_level?: number | null;
+  network_type?: string | null;
   has_moved?: boolean | null;
   scroll_depth?: number | null;
   time_on_page?: number | null;
@@ -110,6 +114,8 @@ export interface LiveFeedItem {
   gpu_renderer?: string | null;
   timezone?: string | null;
   language?: string | null;
+  battery_level?: number | null;
+  network_type?: string | null;
   has_moved?: boolean | null;
   scroll_depth?: number | null;
   time_on_page?: number | null;
