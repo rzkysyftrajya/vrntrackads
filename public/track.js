@@ -55,7 +55,7 @@
       try {
         var sent = navigator.sendBeacon(
           endpoint,
-          new Blob([body], { type: 'application/json' })
+          new Blob([body], { type: 'text/plain;charset=UTF-8' })
         );
         if (sent) return;
       } catch (error) {
@@ -65,9 +65,11 @@
 
     fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: body,
-      keepalive: true
+      keepalive: true,
+      mode: 'cors',
+      credentials: 'omit'
     }).catch(function () {});
   }
 
