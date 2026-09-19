@@ -30,6 +30,10 @@ import {
   UserCheck,
   Copy,
   Cpu,
+  Hand,
+  Bot,
+  Timer,
+  ArrowDownCircle,
 } from 'lucide-react';
 
 import {
@@ -282,6 +286,9 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           gpu_renderer: r.gpu_renderer || null,
           timezone: r.timezone || null,
           language: r.language || null,
+          has_moved: r.has_moved !== undefined ? r.has_moved : null,
+          scroll_depth: typeof r.scroll_depth === 'number' ? r.scroll_depth : null,
+          time_on_page: typeof r.time_on_page === 'number' ? r.time_on_page : null,
           is_duplicate: Boolean(r.is_duplicate || r.status === 'DUPLICATE'),
           is_bot: Boolean(r.is_bot || r.status === 'BOT_FILTERED'),
           status: r.status || (r.is_bot ? 'BOT_FILTERED' : r.is_duplicate ? 'DUPLICATE' : 'OK'),
@@ -307,6 +314,9 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
           gpu_renderer: r.gpu_renderer || null,
           timezone: r.timezone || null,
           language: r.language || null,
+          has_moved: r.has_moved !== undefined ? r.has_moved : null,
+          scroll_depth: typeof r.scroll_depth === 'number' ? r.scroll_depth : null,
+          time_on_page: typeof r.time_on_page === 'number' ? r.time_on_page : null,
           is_duplicate: Boolean(r.is_duplicate),
           is_bot: Boolean(r.is_bot),
           status: r.status || 'OK',
@@ -369,6 +379,9 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               gpu_renderer: r.gpu_renderer ? String(r.gpu_renderer) : null,
               timezone: r.timezone ? String(r.timezone) : null,
               language: r.language ? String(r.language) : null,
+              has_moved: typeof r.has_moved === 'boolean' ? r.has_moved : null,
+              scroll_depth: typeof r.scroll_depth === 'number' ? r.scroll_depth : null,
+              time_on_page: typeof r.time_on_page === 'number' ? r.time_on_page : null,
               is_duplicate: isDup,
               is_bot: isBot,
               status: String(r.status || (isBot ? 'BOT_FILTERED' : isDup ? 'DUPLICATE' : 'OK')),
@@ -438,6 +451,9 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               utm_source: r.utm_source ? String(r.utm_source) : undefined,
               keyword: r.keyword ? String(r.keyword) : undefined,
               landing_page: String(r.landing_page || '/'),
+              has_moved: typeof r.has_moved === 'boolean' ? r.has_moved : null,
+              scroll_depth: typeof r.scroll_depth === 'number' ? r.scroll_depth : null,
+              time_on_page: typeof r.time_on_page === 'number' ? r.time_on_page : null,
               created_at: String(r.created_at || r.timestamp || new Date().toISOString()),
               forwarding_status: profile?.apps_script_url && profile?.forwarding_active ? 'Sent to Apps Script' : 'Disabled',
             };
@@ -511,6 +527,9 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       'IP Address',
       'Fingerprint',
       'Status',
+      'Human Movement (has_moved)',
+      'Scroll Depth (%)',
+      'Time on Page (s)',
       'Is Duplicate',
       'Is Bot',
       'Country',
@@ -536,6 +555,9 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         `"${item.ip_address || ''}"`,
         `"${item.fingerprint || ''}"`,
         `"${item.status || (item.is_bot ? 'BOT' : item.is_duplicate ? 'DUPLICATE' : 'OK')}"`,
+        `"${item.has_moved === true ? 'TRUE' : item.has_moved === false ? 'FALSE' : ''}"`,
+        `"${item.scroll_depth !== null && item.scroll_depth !== undefined ? item.scroll_depth : ''}"`,
+        `"${item.time_on_page !== null && item.time_on_page !== undefined ? item.time_on_page : ''}"`,
         `"${item.is_duplicate ? 'TRUE' : 'FALSE'}"`,
         `"${item.is_bot ? 'TRUE' : 'FALSE'}"`,
         `"${item.country || ''}"`,
@@ -578,6 +600,9 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
       setSimulating(true);
 
       const fakeFingerprint = 'sim_fp_' + Math.random().toString(36).substring(2, 10);
+      const simulatedTimeOnPage = Math.floor(Math.random() * 45) + 5;
+      const simulatedScrollDepth = Math.floor(Math.random() * 60) + 40;
+
       const payload: Record<string, unknown> = {
         event: eventType,
         tracking_key: trackingKey,
@@ -596,6 +621,9 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
         gpu_renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11)',
         timezone: 'Asia/Jakarta',
         language: 'id-ID',
+        has_moved: true,
+        scroll_depth: simulatedScrollDepth,
+        time_on_page: simulatedTimeOnPage,
       };
 
       if (eventType === 'click') {
@@ -656,7 +684,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               <h2 className="text-base font-bold text-white">VRN TRACK ADS — Real-time Google Ads Visitor Tracker</h2>
             </div>
             <p className="text-xs text-zinc-300 max-w-2xl leading-relaxed">
-              Lacak <strong>Browser Fingerprint, Hardware Spec, IP, Kota, GCLID, UTM, &amp; Deteksi Refresh/Bot</strong> secara otomatis dan akurat.
+              Lacak <strong>Browser Fingerprint, Hardware Spec, Behavioral Movements (Scroll &amp; Time), IP, GCLID, UTM, &amp; Deteksi Refresh/Bot</strong> secara otomatis.
             </p>
           </div>
 
@@ -746,7 +774,7 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
             </div>
           </div>
 
-          {/* Custom Date Pickers (revealed when 'custom' is selected) */}
+          {/* Custom Date Pickers */}
           {dateFilter === 'custom' && (
             <div className="flex items-center gap-2 bg-zinc-950/60 px-2.5 py-1 rounded-xl border border-white/10">
               <input
@@ -988,11 +1016,13 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
               </p>
             </div>
           ) : (
-            <table className="w-full text-left min-w-[950px]">
+            <table className="w-full text-left min-w-[1050px]">
               <thead className="sticky top-0 bg-zinc-950/95 backdrop-blur-xl border-b border-white/10 z-10">
                 <tr className="text-[10px] uppercase tracking-wider text-zinc-400 font-bold">
                   <th className="px-4 py-3">Waktu</th>
                   <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Behavior</th>
+                  <th className="px-4 py-3">Engagement</th>
                   <th className="px-4 py-3">Event</th>
                   <th className="px-4 py-3">IP &amp; Geo Location</th>
                   <th className="px-4 py-3">Device Specs &amp; GPU</th>
@@ -1035,6 +1065,44 @@ export default function DashboardOverview({ onNavigate }: DashboardOverviewProps
                             🟢 OK
                           </span>
                         )}
+                      </td>
+
+                      {/* Behavioral Tracking: Human Movement Indicator */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {item.has_moved === true ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-300" title="Gerakan kursor/touch manusia terdeteksi">
+                            <Hand className="h-3 w-3 text-emerald-400" />
+                            <span>🖐️ Human</span>
+                          </span>
+                        ) : item.has_moved === false ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/10 border border-rose-500/30 px-2.5 py-0.5 text-[10px] font-semibold text-rose-300" title="Tidak ada interaksi/gerakan terdeteksi (Indikasi Bot/Script)">
+                            <Bot className="h-3 w-3 text-rose-400" />
+                            <span>🤖 No Move</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500 font-mono">-</span>
+                        )}
+                      </td>
+
+                      {/* Engagement: Time on Page & Scroll Depth */}
+                      <td className="px-4 py-3 whitespace-nowrap text-xs text-zinc-300">
+                        <div className="flex items-center gap-2">
+                          {item.time_on_page !== null && item.time_on_page !== undefined ? (
+                            <span className="inline-flex items-center gap-1 rounded bg-zinc-800/90 border border-white/5 px-1.5 py-0.5 text-[10px] font-mono text-cyan-300" title="Waktu tinggal di halaman (Time on Page)">
+                              <Timer className="h-3 w-3 text-cyan-400" />
+                              {item.time_on_page}s
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-zinc-600 font-mono">-</span>
+                          )}
+
+                          {item.scroll_depth !== null && item.scroll_depth !== undefined ? (
+                            <span className="inline-flex items-center gap-1 rounded bg-zinc-800/90 border border-white/5 px-1.5 py-0.5 text-[10px] font-mono text-amber-300" title="Persentase Scroll Depth">
+                              <ArrowDownCircle className="h-3 w-3 text-amber-400" />
+                              {item.scroll_depth}%
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
 
                       {/* Event Type Badge */}
